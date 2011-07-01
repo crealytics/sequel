@@ -3101,6 +3101,67 @@ describe "Dataset#update_sql" do
   end
 end
 
+describe "Dataset#update_in_chunks" do
+  before do
+    @ds = Sequel::Dataset.new(nil).from(:items)
+    def @ds.execute_dui(*args)
+    end
+
+    @range = 6 * (1 + rand(10))
+    @min = 1 + rand(20)
+    @max = @min + @range - 1
+    @ds.stub!(:min).with(:key_column).and_return(@min)
+    @ds.stub!(:max).with(:key_column).and_return(@max)
+
+    @values = mock('values')
+  end
+
+  def create_dataset_mock_expecting_update_with_values(name, values)
+    new_dataset_mock = mock(name)
+    new_dataset_mock.should_receive(:update).with(values).once
+    new_dataset_mock
+  end
+
+  context "chunk_size = number of values" do
+    before do
+      @chunksize = @range
+    end
+
+    specify "should call update on exactly one dataset with correct ranges" do
+      nds = create_dataset_mock_expecting_update_with_values('new_dataset', @values)
+      @ds.stub!(:where).with(:key_column => @min..@max).and_return(nds)
+      @ds.update_in_chunks(:key_column, @values, @chunksize)
+    end
+  end
+
+  context "chunk_size != number of values" do
+    before do
+      @chunksize = 1+rand(@range-2)
+      @sub_set_ranges = []
+      @ds.stub!(:where) do |filter|
+        @sub_set_ranges << filter[:key_column]
+        create_dataset_mock_expecting_update_with_values("data_sub_set for #{filter[:key_column]}", @values)
+      end
+    end
+
+    subject { @ds.update_in_chunks(:key_column, @values, @chunksize) }
+
+    it "should generate sub-sets with <= chunk_size elements" do
+      subject
+      @sub_set_ranges.each {|range| (range.max - range.min + 1).should be <= @chunksize}
+    end
+
+    it "should generate sub-sets which cover every element exactly once" do
+      subject
+      updated_items = (@min..@max).collect { 0 }
+      @sub_set_ranges.each do |sub_set_range|
+        sub_set_range.each {|index| updated_items[index-@min] += 1 }
+      end
+      updated_items.inject(true) {|all_covered_once, current_covered_number| all_covered_once and current_covered_number == 1}.should be_true
+    end
+  end
+end
+
 describe "Dataset#insert_sql" do
   before do
     @ds = Sequel::Dataset.new(nil).from(:items)

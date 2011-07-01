@@ -43,7 +43,17 @@ describe "Simple Dataset operations" do
     @ds.update(:number=>:number+1).should == 1
     @ds.all.should == [{:id=>1, :number=>11}]
   end
-  
+
+  specify "should update_in_chunks correctly" do
+    @ds << {:number=>20}
+    @ds << {:number=>30}
+    @ds.update_in_chunks(:id, {:number=>:number+1}, 1)
+    @ds.order(:number).all.should == [
+      {:id => 1, :number=>11},
+      {:id => 2, :number=>21},
+      {:id => 3, :number=>31} ]
+  end
+
   cspecify "should have update return the number of matched rows", [:mysql, :mysql], [:do, :mysql], [:mysql2], [:ado] do
     @ds.update(:number=>:number).should == 1
     @ds.filter(:id=>1).update(:number=>:number).should == 1
