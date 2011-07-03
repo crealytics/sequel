@@ -3102,16 +3102,16 @@ describe "Dataset#update_sql" do
 end
 
 describe "Dataset#update_in_chunks" do
+  let(:range) { 6 * (1 + rand(10)) }
+  let(:min) { 1 + rand(20) }
+  let(:max) { min + range - 1 }
   before do
     @ds = Sequel::Dataset.new(nil).from(:items)
     def @ds.execute_dui(*args)
     end
 
-    @range = 6 * (1 + rand(10))
-    @min = 1 + rand(20)
-    @max = @min + @range - 1
-    @ds.stub!(:min).with(:key_column).and_return(@min)
-    @ds.stub!(:max).with(:key_column).and_return(@max)
+    @ds.stub!(:min).with(:key_column).and_return(min)
+    @ds.stub!(:max).with(:key_column).and_return(max)
 
     @values = mock('values')
   end
@@ -3124,19 +3124,19 @@ describe "Dataset#update_in_chunks" do
 
   context "chunk_size = number of values" do
     before do
-      @chunksize = @range
+      @chunksize = range
     end
 
     specify "should call update on exactly one dataset with correct ranges" do
       nds = create_dataset_mock_expecting_update_with_values('new_dataset', @values)
-      @ds.stub!(:where).with(:key_column => @min..@max).and_return(nds)
+      @ds.stub!(:where).with(:key_column => min..max).and_return(nds)
       @ds.update_in_chunks(:key_column, @values, @chunksize)
     end
   end
 
   context "chunk_size != number of values" do
     before do
-      @chunksize = 1+rand(@range-2)
+      @chunksize = 1+rand(range-2)
       @sub_set_ranges = []
       @ds.stub!(:where) do |filter|
         @sub_set_ranges << filter[:key_column]
@@ -3153,9 +3153,9 @@ describe "Dataset#update_in_chunks" do
 
     it "should generate sub-sets which cover every element exactly once" do
       subject
-      updated_items = (@min..@max).collect { 0 }
+      updated_items = (min..max).collect { 0 }
       @sub_set_ranges.each do |sub_set_range|
-        sub_set_range.each {|index| updated_items[index-@min] += 1 }
+        sub_set_range.each {|index| updated_items[index-min] += 1 }
       end
       updated_items.inject(true) {|all_covered_once, current_covered_number| all_covered_once and current_covered_number == 1}.should be_true
     end
