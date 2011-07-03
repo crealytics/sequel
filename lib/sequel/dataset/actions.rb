@@ -532,6 +532,7 @@ module Sequel
     def update_in_chunks(key, values={}, chunk_size=10000)
       min = self.min(key)
       max = self.max(key)
+      return unless min and max
       (min..max).step(chunk_size) do |lower|
         upper = [lower + chunk_size-1, max].min
         self.where(key => lower..upper).update(values)

@@ -53,6 +53,11 @@ describe "Simple Dataset operations" do
       {:id => 2, :number=>21},
       {:id => 3, :number=>31} ]
   end
+  specify "should update_in_chunks correctly if table is empty" do
+    @ds.delete
+    @ds.update_in_chunks(:id, {:number=>:number+1}, 1)
+    @ds.order(:number).all.should == []
+  end
 
   cspecify "should have update return the number of matched rows", [:mysql, :mysql], [:do, :mysql], [:mysql2], [:ado] do
     @ds.update(:number=>:number).should == 1

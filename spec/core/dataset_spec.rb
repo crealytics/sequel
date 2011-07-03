@@ -3123,6 +3123,9 @@ describe "Dataset#update_in_chunks" do
   context "for an empty table" do
     let(:min) { nil }
     let(:max) { nil }
+    it "should not raise" do
+      subject
+    end
   end
 
   context "for a non-empty table" do
