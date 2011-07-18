@@ -3102,9 +3102,10 @@ describe "Dataset#update_sql" do
 end
 
 describe "Dataset#update_in_chunks" do
-  subject { @ds.update_in_chunks(:key_column, values, chunk_size) }
+  subject { @ds.update_in_chunks(:key_column, values, chunk_size, wait_time) }
   let(:values) { mock('values') }
   let(:chunk_size) { 10000 }
+  let(:wait_time) { 1 }
   before do
     @ds = Sequel::Dataset.new(nil).from(:items)
     def @ds.execute_dui(*args)
@@ -3138,6 +3139,7 @@ describe "Dataset#update_in_chunks" do
       specify "should call update on exactly one dataset with correct ranges" do
         nds = create_dataset_mock_expecting_update_with_values('new_dataset', values)
         @ds.stub!(:where).with(:key_column => min..max).and_return(nds)
+        @ds.should_not_receive(:sleep)
         @ds.update_in_chunks(:key_column, values, chunk_size)
       end
     end
@@ -3150,6 +3152,22 @@ describe "Dataset#update_in_chunks" do
           @sub_set_ranges << filter[:key_column]
           create_dataset_mock_expecting_update_with_values("data_sub_set for #{filter[:key_column]}", values)
         end
+        @sleep_wait_times = []
+        @ds.stub!(:sleep) do |current_wait_time|
+          @sleep_wait_times << current_wait_time
+        end
+      end
+
+      it "should call sleep with the correct timeout" do
+        subject
+        @sleep_wait_times.each do |current_wait_time|
+          current_wait_time.should == wait_time
+        end
+      end
+
+      it "should call sleep exactly number of chunks - 1 times" do
+        subject
+        @sleep_wait_times.count.should == @sub_set_ranges.count - 1
       end
 
       it "should generate sub-sets with <= chunk_size elements" do
