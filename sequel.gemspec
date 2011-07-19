@@ -17,4 +17,5 @@ spec = Gem::Specification.new do |s|
   s.require_path = "lib"
   s.bindir = 'bin'
   s.executables << 'sequel'
+  s.add_development_dependency 'rspec','>= 2.0'
 end
