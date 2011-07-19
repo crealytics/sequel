@@ -1,0 +1,14 @@
+PATH
+  remote: .
+  specs:
+    sequel (3.25.111)
+
+GEM
+  remote: http://rubygems.org/
+  specs:
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  sequel!
