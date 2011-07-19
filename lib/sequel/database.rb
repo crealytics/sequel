@@ -1,3 +1,5 @@
+require 'sequel/metaprogramming'
+(%w"connecting dataset dataset_defaults logging misc query schema_generator schema_methods").each {|source| require "sequel/database/#{source}"}
 module Sequel
   # Hash of adapters that have been used. The key is the adapter scheme
   # symbol, and the value is the Database subclass.
@@ -17,5 +19,4 @@ module Sequel
     include Metaprogramming
   end
 
-  require(%w"connecting dataset dataset_defaults logging misc query schema_generator schema_methods", 'database')
 end

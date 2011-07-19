@@ -1,3 +1,4 @@
+require 'bigdecimal'
 module Sequel
   # The Schema module holds the schema generators.
   module Schema

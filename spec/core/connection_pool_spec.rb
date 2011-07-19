@@ -1,4 +1,5 @@
 require File.join(File.dirname(File.expand_path(__FILE__)), 'spec_helper')
+require 'sequel/connection_pool'
 CONNECTION_POOL_DEFAULTS = {:pool_timeout=>5, :pool_sleep_time=>0.001, :max_connections=>4}
 
 describe "An empty ConnectionPool" do

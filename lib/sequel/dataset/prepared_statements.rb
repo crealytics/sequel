@@ -1,4 +1,5 @@
-module Sequel 
+require 'sequel/sql'
+module Sequel
   class Dataset
     # ---------------------
     # :section: Methods related to prepared statements or bound variables
