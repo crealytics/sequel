@@ -18,4 +18,5 @@ spec = Gem::Specification.new do |s|
   s.bindir = 'bin'
   s.executables << 'sequel'
   s.add_development_dependency 'rspec','>= 2.0'
+  s.add_development_dependency 'sqlite3','= 1.3.3'
 end
