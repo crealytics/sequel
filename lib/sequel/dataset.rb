@@ -1,4 +1,3 @@
-(%w"query actions features graph prepared_statements misc mutation sql").each {|source| require "sequel/dataset/#{source}"}
 module Sequel
   # A dataset represents an SQL query, or more generally, an abstract
   # set of rows in the database.  Datasets
@@ -36,5 +35,6 @@ module Sequel
     include SQL::OrderMethods
     include SQL::StringMethods
   end
-
+  
+  require(%w"query actions features graph prepared_statements misc mutation sql", 'dataset')
 end
