@@ -529,7 +529,9 @@ module Sequel
     end
 
 
-    def update_in_chunks(key, values={}, chunk_size=10000, wait_time=0)
+    def update_in_chunks(key, values={}, options={} )
+      chunk_size = options[:chunk_size] || 10000
+      wait_time = options[:wait_time] || 0
       min = self.min(key)
       max = self.max(key)
       return unless min and max

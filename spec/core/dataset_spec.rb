@@ -3102,7 +3102,7 @@ describe "Dataset#update_sql" do
 end
 
 describe "Dataset#update_in_chunks" do
-  subject { @ds.update_in_chunks(:key_column, values, chunk_size, wait_time) }
+  subject { @ds.update_in_chunks(:key_column, values, { :chunk_size => chunk_size, :wait_time => wait_time }) }
   let(:values) { mock('values') }
   let(:chunk_size) { 10000 }
   let(:wait_time) { 1 }
@@ -3140,7 +3140,7 @@ describe "Dataset#update_in_chunks" do
         nds = create_dataset_mock_expecting_update_with_values('new_dataset', values)
         @ds.stub!(:where).with(:key_column => min..max).and_return(nds)
         @ds.should_not_receive(:sleep)
-        @ds.update_in_chunks(:key_column, values, chunk_size)
+        @ds.update_in_chunks(:key_column, values, { :chunk_size => chunk_size })
       end
     end
 
