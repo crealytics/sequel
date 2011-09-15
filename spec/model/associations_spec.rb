@@ -1890,7 +1890,7 @@ describe Sequel::Model, "one_to_many" do
 end
 
 describe Sequel::Model, "many_to_many" do
-
+  SOME_COLUMN = :z
   before do
     MODEL_DB.reset
 
@@ -1899,13 +1899,13 @@ describe Sequel::Model, "many_to_many" do
       attr_accessor :yyy
       def self.name; 'Attribute'; end
       def self.to_s; 'Attribute'; end
-      columns :id, :y
+      columns :id, SOME_COLUMN
       def _refresh(ds)
         self
       end
       
       def self.[](id)
-        load(id.is_a?(Array) ? {:id => id[0], :y => id[1]} : {:id => id})
+        load(id.is_a?(Array) ? {:id => id[0], SOME_COLUMN => id[1]} : {:id => id})
       end
     end
 
@@ -2018,12 +2018,12 @@ describe Sequel::Model, "many_to_many" do
   end
   
   it "should support composite keys" do
-    @c2.many_to_many :attributes, :class => @c1, :left_key=>[:l1, :l2], :right_key=>[:r1, :r2], :left_primary_key=>[:id, :x], :right_primary_key=>[:id, :y]
-    @c2.load(:id => 1234, :x=>5).attributes_dataset.sql.should == 'SELECT attributes.* FROM attributes INNER JOIN attributes_nodes ON ((attributes_nodes.r1 = attributes.id) AND (attributes_nodes.r2 = attributes.y) AND (attributes_nodes.l1 = 1234) AND (attributes_nodes.l2 = 5))'
+    @c2.many_to_many :attributes, :class => @c1, :left_key=>[:l1, :l2], :right_key=>[:r1, :r2], :left_primary_key=>[:id, :x], :right_primary_key=>[:id, SOME_COLUMN]
+    @c2.load(:id => 1234, :x=>5).attributes_dataset.sql.should == "SELECT attributes.* FROM attributes INNER JOIN attributes_nodes ON ((attributes_nodes.r1 = attributes.id) AND (attributes_nodes.r2 = attributes.#{SOME_COLUMN}) AND (attributes_nodes.l1 = 1234) AND (attributes_nodes.l2 = 5))"
   end
   
   it "should not issue query if not all keys have values" do
-    @c2.many_to_many :attributes, :class => @c1, :left_key=>[:l1, :l2], :right_key=>[:r1, :r2], :left_primary_key=>[:id, :x], :right_primary_key=>[:id, :y]
+    @c2.many_to_many :attributes, :class => @c1, :left_key=>[:l1, :l2], :right_key=>[:r1, :r2], :left_primary_key=>[:id, :x], :right_primary_key=>[:id, SOME_COLUMN]
     @c2.load(:id => 1234, :x=>nil).attributes.should == []
     MODEL_DB.sqls.should == []
   end
@@ -2211,9 +2211,9 @@ describe Sequel::Model, "many_to_many" do
   end
   
   it "should have the add_ method respect composite keys" do
-    @c2.many_to_many :attributes, :class => @c1, :left_key=>[:l1, :l2], :right_key=>[:r1, :r2], :left_primary_key=>[:id, :x], :right_primary_key=>[:id, :y]
+    @c2.many_to_many :attributes, :class => @c1, :left_key=>[:l1, :l2], :right_key=>[:r1, :r2], :left_primary_key=>[:id, :x], :right_primary_key=>[:id, SOME_COLUMN]
     n = @c2.load(:id => 1234, :x=>5)
-    a = @c1.load(:id => 2345, :y=>8)
+    a = @c1.load(:id => 2345, SOME_COLUMN=>8)
     a.should == n.add_attribute(a)
     m = /INSERT INTO attributes_nodes \((\w+), (\w+), (\w+), (\w+)\) VALUES \((\d+), (\d+), (\d+), (\d+)\)/.match(MODEL_DB.sqls.first)
     m.should_not == nil
@@ -2231,9 +2231,9 @@ describe Sequel::Model, "many_to_many" do
   end
   
   it "should have the add_ method respect composite keys" do
-    @c2.many_to_many :attributes, :class => @c1, :left_key=>[:l1, :l2], :right_key=>[:r1, :r2], :left_primary_key=>[:id, :x], :right_primary_key=>[:id, :y]
+    @c2.many_to_many :attributes, :class => @c1, :left_key=>[:l1, :l2], :right_key=>[:r1, :r2], :left_primary_key=>[:id, :x], :right_primary_key=>[:id, SOME_COLUMN]
     n = @c2.load(:id => 1234, :x=>5)
-    a = @c1.load(:id => 2345, :y=>8)
+    a = @c1.load(:id => 2345, SOME_COLUMN=>8)
     a.should == n.add_attribute([2345, 8])
     MODEL_DB.sqls.first.should =~ /INSERT INTO attributes_nodes \([lr][12], [lr][12], [lr][12], [lr][12]\) VALUES \((1234|5|2345|8), (1234|5|2345|8), (1234|5|2345|8), (1234|5|2345|8)\)/
   end
@@ -2248,26 +2248,26 @@ describe Sequel::Model, "many_to_many" do
   end
   
   it "should have the remove_ method respect composite keys" do
-    @c2.many_to_many :attributes, :class => @c1, :left_key=>[:l1, :l2], :right_key=>[:r1, :r2], :left_primary_key=>[:id, :x], :right_primary_key=>[:id, :y]
+    @c2.many_to_many :attributes, :class => @c1, :left_key=>[:l1, :l2], :right_key=>[:r1, :r2], :left_primary_key=>[:id, :x], :right_primary_key=>[:id, SOME_COLUMN]
     n = @c2.load(:id => 1234, :x=>5)
-    a = @c1.load(:id => 2345, :y=>8)
+    a = @c1.load(:id => 2345, SOME_COLUMN=>8)
     a.should == n.remove_attribute(a)
     MODEL_DB.sqls.should == ["DELETE FROM attributes_nodes WHERE ((l1 = 1234) AND (l2 = 5) AND (r1 = 2345) AND (r2 = 8))"]
   end
 
   it "should accept a array of composite primary key values for the remove_ method and remove an existing record" do
-    @c1.set_primary_key [:id, :y]
+    @c1.set_primary_key [:id, SOME_COLUMN]
     @c2.many_to_many :attributes, :class => @c1
     n = @c2.new(:id => 1234)
     ds = @c1.dataset
     def ds.fetch_rows(sql)
       db << sql
-      yield({:id=>234, :y=>8})
+      yield({:id=>234, SOME_COLUMN=>8})
     end
     MODEL_DB.reset
-    @c1.load(:id => 234, :y=>8).should == n.remove_attribute([234, 8])
-    ["SELECT attributes.* FROM attributes INNER JOIN attributes_nodes ON ((attributes_nodes.attribute_id = attributes.id) AND (attributes_nodes.node_id = 1234)) WHERE ((attributes.id = 234) AND (attributes.y = 8)) LIMIT 1",
-      "SELECT attributes.* FROM attributes INNER JOIN attributes_nodes ON ((attributes_nodes.attribute_id = attributes.id) AND (attributes_nodes.node_id = 1234)) WHERE ((attributes.y = 8) AND (attributes.id = 234)) LIMIT 1"].should include(MODEL_DB.sqls.first)
+    @c1.load(:id => 234, SOME_COLUMN=>8).should == n.remove_attribute([234, 8])
+    ["SELECT attributes.* FROM attributes INNER JOIN attributes_nodes ON ((attributes_nodes.attribute_id = attributes.id) AND (attributes_nodes.node_id = 1234)) WHERE ((attributes.id = 234) AND (attributes.#{SOME_COLUMN} = 8)) LIMIT 1",
+      "SELECT attributes.* FROM attributes INNER JOIN attributes_nodes ON ((attributes_nodes.attribute_id = attributes.id) AND (attributes_nodes.node_id = 1234)) WHERE ((attributes.#{SOME_COLUMN} = 8) AND (attributes.id = 234)) LIMIT 1"].should include(MODEL_DB.sqls.first)
     MODEL_DB.sqls.last.should == "DELETE FROM attributes_nodes WHERE ((node_id = 1234) AND (attribute_id = 234))"
     MODEL_DB.sqls.length.should == 2
   end
