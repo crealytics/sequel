@@ -488,14 +488,17 @@ describe Sequel::Model, "A model class without a primary key" do
 end
 
 describe Sequel::Model, "attribute accessors" do
+  ACCESSORS = [:x, :z]
+  let(:accessors) { ACCESSORS }
+  let(:accessor_methods) { accessors.collect {|a| [a,"#{a}=".to_sym]}.flatten }
   before do
     MODEL_DB.reset
     @dataset = Sequel::Dataset.new(MODEL_DB)
-    def @dataset.columns; [:x, :y]; end
+    def @dataset.columns; ACCESSORS; end
     @c = Class.new(Sequel::Model) do
       def self.db_schema
          set_columns(Array(@columns))
-        @db_schema = {:x=>{:type=>:integer}, :y=>{:type=>:integer}}
+        @db_schema = Hash[*ACCESSORS.collect {|a| [a, {:type=>:integer}]}.flatten]
       end
       def self.set_dataset(ds, opts={}) 
         @columns = ds.columns
@@ -505,16 +508,16 @@ describe Sequel::Model, "attribute accessors" do
   end
 
   it "should be created on set_dataset" do
-    %w'x y x= y='.each do |x|
-      @c.instance_methods.collect{|y| y.to_s}.should_not include(x)
+    accessor_methods.each do |x|
+      @c.instance_methods.should_not include(x)
     end
     @c.set_dataset(@dataset)
-    %w'x y x= y='.each do |x|
-      @c.instance_methods.collect{|y| y.to_s}.should include(x)
+    accessor_methods.each do |x|
+      @c.instance_methods.should include(x)
     end
     o = @c.new
-    %w'x y x= y='.each do |x|
-      o.methods.collect{|y| y.to_s}.should include(x)
+    accessor_methods.each do |x|
+      o.methods.should include(x)
     end
 
     o.x.should be_nil
