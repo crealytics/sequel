@@ -46,6 +46,13 @@ unless the first argument is a hash. So the following statements are equivalent 
   DB = Sequel.postgres('blog', :host=>'localhost', :user=>'user', :password=>'password')
   DB = Sequel.postgres(:host=>'localhost', :user=>'user', :password=>'password', :database=>'blog')
 
+Note that using an adapter method forces the use of the specified adapter, not a database type, even
+though some adapters have the same name as the database type.  So if you
+want to connect to SQLite, for example, you can do so using the sqlite, do, dbi, jdbc, odbc, and swift adapters.
+If you want to connect to SQLite on JRuby using the jdbc adapter, you should not use <tt>Sequel.sqlite</tt>
+for example, as that uses the C-based sqlite3 gem. Instead, the <tt>Sequel.jdbc</tt> would be appropriate (though
+as mentioned below, using <tt>Sequel.connect</tt> is recommended instead of <tt>Sequel.jdbc</tt>). 
+
 == Passing a block to either method
 
 Both the Sequel.connect method and the specialized adapter methods take a block.  If you
@@ -145,10 +152,8 @@ the sqlite section below for details.
 
 Requires: db2/db2cli
 
-I'm not even sure exactly how this works, or if it works at all (I've never heard from
-anyone who attempted to use it).  It uses the SQL_HANDLE_DBC constant to
-get a handle, and respects the :database, :user, and :password options.  It doesn't
-appear to respect the :host or :port options.
+This is the older DB2 adapter.  It's recommended you try the ibmdb adapter
+instead for new DB2 work, as it is better supported.
 
 === dbi 
 
@@ -201,6 +206,13 @@ Requires: fb (using code at http://github.com/wishdev/fb)
 
 Does not support the :port option.
 
+=== ibmdb
+
+requires 'ibm_db'
+
+This connects to DB2 using IBM_DB.  This is the recommended adapter if you are
+using a C-based ruby to connect to DB2.
+
 === informix 
 
 Does not support the :host or :port options.  Depending on the configuration of your server
@@ -221,7 +233,7 @@ Requires: java
 Houses Sequel's JDBC support when running on JRuby.
 Support for individual database types is done using sub adapters.
 There are currently subadapters for PostgreSQL, MySQL, SQLite, H2,
-Oracle, MSSQL, JTDS, and AS400.  All except Oracle, MSSQL, and AS400 can load the
+Oracle, MSSQL, JTDS, AS400, and DB2.  All except Oracle, MSSQL, AS400, and DB2 can load the
 jdbc-* gem, for those you need to have the .jar in your CLASSPATH
 or load the Java class manually before calling Sequel.connect.
 
@@ -262,6 +274,8 @@ The following additional options are supported:
 
 === mysql 
 
+Requires: mysqlplus (or mysql if mysqlplus is not available)
+
 The MySQL adapter does not support the pure-ruby MySQL adapter that used to ship with
 ActiveRecord, it requires the native adapter.
 
@@ -277,6 +291,12 @@ The following additional options are supported:
 * :timeout - Sets the wait_timeout for the connection, defaults to 1 month.
 * :read_timeout - Set the timeout in seconds for reading back results to a query.
 * :connect_timeout - Set the timeout in seconds before a connection attempt is abandoned.
+
+=== mysql2
+
+This is a newer MySQL adapter that does typecasting in C, so it is often faster than the
+mysql adapter.  Supports the same additional options as the mysql adapter, except for :compress, and uses
+:timeout instead of :read_timeout and :connect_timeout.
 
 === odbc 
 
@@ -316,6 +336,8 @@ The following additional options are supported:
 
 === sqlite
 
+Requires: sqlite3
+
 As SQLite is a file-based database, the :host and :port options are ignored, and
 the :database option should be a path to the file.
 
@@ -352,6 +374,8 @@ Examples:
   swift://root:root@localhost/test?db_type=postgres
 
 === tinytds
+
+Requires: tiny_tds
 
 Because the underscore is not a valid character in a URI schema, the adapter
 is named tinytds instead of tiny_tds.  The connection options are passed directly

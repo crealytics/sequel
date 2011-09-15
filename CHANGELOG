@@ -1,5 +1,91 @@
 === HEAD
 
+* Add db2 jdbc subadapter (jeremyevans)
+
+* Fix the db2 adapter so it actually works (jeremyevans)
+
+* Add ibmdb adapter for accessing DB2 (roylez, jeremyevans)
+
+* Add much better support for DB2 databases (roylez, jeremyevans)
+
+* Handle SQL::AliasedExpressions and SQL::JoinClauses in Dataset#select_all (jeremyevans)
+
+* Speed up type translation slightly in mysql, postgres, and sqlite adapters (jeremyevans)
+
+* Add Dataset#supports_cte_in_subqueries? for checking whether database supports WITH in subqueries (jeremyevans)
+
+* Allow Model.set_dataset to accept Sequel::LiteralString arguments as table names (jeremyevans)
+
+* Association :after_load hooks in lazy loading are now called after the associated objects have been cached (jeremyevans)
+ 
+* Emulate handling of extract on MSSQL, using datepart (jeremyevans)
+
+* Emulate handling of extract on SQLite, but you need to set Database#use_timestamp_timezones = false (jeremyevans)
+
+* Abstract handling of ComplexExpressionMethods#extract so that it can work on databases that don't implement extract (jeremyevans)
+
+* Emulate xor operator on SQLite (jeremyevans)
+
+* Add Dataset#supports_where_true? for checking if the database supports WHERE true (or WHERE 1 if 1 is true) (jeremyevans)
+
+* Fix eager loading via eager of one_to_one associations that match multiple associated objects and use order to pick the first one (jeremyevans)
+
+=== 3.27.0 (2011-09-01)
+
+* Add support for native prepared statements to the tinytds adapter (jeremyevans)
+
+* Add support for native prepared statements and stored procedures to the mysql2 adapter (jeremyevans)
+
+* Support dropping primary key, foreign key, and unique constraints on MySQL via the drop_constraint :type option (jeremyevans)
+
+* Add Sequel::SQLTime class for handling SQL time columns (jeremyevans)
+
+* Typecast DateTime objects to Date for date columns (jeremyevans)
+
+* When typecasting Date objects to timestamps, make the resulting objects always have no fractional date components (jeremyevans)
+
+* Add Model.dataset_module for simplifying many def_dataset_method calls (jeremyevans)
+
+* Make prepared_statements_safe plugin work on classes without datasets (jeremyevans)
+
+* Make Dataset#hash work correctly when referencing SQL::Expression instances (jeremyevans)
+
+* Handle allowed mass assignment methods correctly when including modules in classes or extending instances with modules (jeremyevans)
+
+* Fix Model#hash to work correctly with composite primary keys and with no primary key (jeremyevans)
+
+* Model#exists? now returns false without issuing a query for new model objects (jeremyevans)
+
+=== 3.26.0 (2011-08-01)
+
+* Fix bug in default connection pool if a disconnect error is raised and the disconnection_proc also raises an error (jeremyevans)
+
+* Disallow eager loading via eager of many_*_many associations with :eager_graph option (jeremyevans)
+
+* Major speedup in dataset creation (jeremyevans)
+
+* Replace internal implementation of eager_graph with much faster version (jeremyevans)
+
+* Don't treat strings with leading zeros as octal format in the default typecasting (jeremyevans)
+
+* Fix literalization of Date, Time, and DateTime values on Microsoft Access (jeremyevans)
+
+* Fix handling of nil values with the pure-Java version of nokogiri in the xml_serializer plugin (jeremyevans)
+
+* Make identity_map plugin work with standard eager loading of many_to_many and many_through_many associations (jeremyevans)
+
+* Make create_table! only attempt to drop the table if it already exists (jeremyevans)
+
+* Remove custom table_exists? implementations in the oracle and postgres adapters (jeremyevans)
+
+* Handle another type of disconnection in the postgres adapter (jeremyevans)
+
+* Handle disconnections in the ado adapter and do postgres subadapter (jeremyevans)
+
+* Recognize disconnections when issuing BEGIN/ROLLBACK/COMMIT statements (jeremyevans) (#368)
+
+=== 3.25.0 (2011-07-01)
+
 * Work with tiny_tds-0.4.5 in the tinytds adapter, older versions are no longer supported (jeremyevans)
 
 * Make association_pks plugin typecast provided values to integer if the primary key column type is integer (jeremyevans)

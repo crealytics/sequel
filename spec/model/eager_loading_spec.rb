@@ -106,6 +106,9 @@ describe Sequel::Model, "#eager" do
       end
     })
   end
+  after do
+    [:EagerAlbum, :EagerBand, :EagerTrack, :EagerGenre, :EagerBandMember].each{|x| Object.send(:remove_const, x)}
+  end
   
   it "should raise an error if called without a symbol or hash" do
     proc{EagerAlbum.eager(Object.new)}.should raise_error(Sequel::Error)
@@ -315,25 +318,8 @@ describe Sequel::Model, "#eager" do
     MODEL_DB.sqls.length.should == 2
   end
   
-  it "should cascade eagerly loading when the :eager_graph association option is used with a many_to_many association" do
-    EagerBandMember.dataset.extend(Module.new {
-      def columns
-        [:id]
-      end
-      def fetch_rows(sql)
-        @db << sql
-        yield({:id=>5, :bands_id=>2, :p_k=>6, :x_foreign_key_x=>2})
-        yield({:id=>5, :bands_id=>3, :p_k=>6, :x_foreign_key_x=>2})
-      end
-    })
-    a = EagerBand.eager(:graph_members).all
-    a.should == [EagerBand.load(:id=>2)]
-    MODEL_DB.sqls.should == ['SELECT * FROM bands', 
-                             'SELECT members.id, bands.id AS bands_id, bands.p_k, bm.band_id AS x_foreign_key_x FROM (SELECT members.* FROM members INNER JOIN bm ON ((bm.member_id = members.id) AND (bm.band_id IN (2)))) AS members LEFT OUTER JOIN bm AS bm_0 ON (bm_0.member_id = members.id) LEFT OUTER JOIN bands ON (bands.id = bm_0.band_id) ORDER BY bands.id']
-    a = a.first
-    a.graph_members.should == [EagerBandMember.load(:id=>5)]
-    a.graph_members.first.bands.should == [EagerBand.load(:id=>2, :p_k=>6), EagerBand.load(:id=>3, :p_k=>6)]
-    MODEL_DB.sqls.length.should == 2
+  it "should raise an Error when eager loading a many_to_many association with the :eager_graph option" do
+    proc{EagerBand.eager(:graph_members).all}.should raise_error(Sequel::Error)
   end
   
   it "should respect :eager_graph when lazily loading an association" do
@@ -1077,13 +1063,13 @@ describe Sequel::Model, "#eager_graph" do
     a.members.first.values.should == {:id => 5}
   end
 
-  it "should give you a graph of tables when called without .all" do 
+  it "should give you a plain hash when called without .all" do 
     ds = GraphAlbum.eager_graph(:band)
     ds.sql.should == 'SELECT albums.id, albums.band_id, band.id AS band_id_0, band.vocalist_id FROM albums LEFT OUTER JOIN bands AS band ON (band.id = albums.band_id)'
     def ds.fetch_rows(sql, &block)
       yield({:id=>1, :band_id=>2, :band_id_0=>2, :vocalist_id=>3})
     end
-    ds.first.should == {:albums=>GraphAlbum.load(:id => 1, :band_id => 2), :band=>GraphBand.load(:id => 2, :vocalist_id=>3)}
+    ds.first.should == {:id=>1, :band_id=>2, :band_id_0=>2, :vocalist_id=>3}
   end
 
   it "should not drop any associated objects if the graph could not be a cartesian product" do

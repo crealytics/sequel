@@ -2,16 +2,17 @@ require File.join(File.dirname(File.expand_path(__FILE__)), 'spec_helper.rb')
 
 describe "Simple Dataset operations" do
   before do
-    INTEGRATION_DB.create_table!(:items) do
+    @db = INTEGRATION_DB
+    @db.create_table!(:items) do
       primary_key :id
       Integer :number
     end
-    @ds = INTEGRATION_DB[:items]
+    @ds = @db[:items]
     @ds.insert(:number=>10)
     clear_sqls
   end
   after do
-    INTEGRATION_DB.drop_table(:items)
+    @db.drop_table(:items)
   end
 
   specify "should support sequential primary keys" do
@@ -23,7 +24,7 @@ describe "Simple Dataset operations" do
       {:id => 3, :number=>30} ]   
   end 
 
-  cspecify "should insert with a primary key specified", :mssql do
+  cspecify "should insert with a primary key specified", :db2, :mssql do
     @ds.insert(:id=>100, :number=>20)
     @ds.count.should == 2
     @ds.order(:id).all.should == [{:id=>1, :number=>10}, {:id=>100, :number=>20}]
@@ -32,6 +33,15 @@ describe "Simple Dataset operations" do
   specify "should have insert return primary key value" do
     @ds.insert(:number=>20).should == 2
     @ds.filter(:id=>2).first[:number].should == 20
+  end
+
+  cspecify "should have insert work correctly when inserting a row with all NULL values", :db2 do
+    @db.create_table!(:items) do
+      String :name
+      Integer :number
+    end
+    proc{@ds.insert}.should_not raise_error
+    @ds.all.should == [{:name=>nil, :number=>nil}]
   end
 
   specify "should delete correctly" do
@@ -94,7 +104,24 @@ describe "Simple Dataset operations" do
     @ds.order(:id).limit(2, 1).all.should == [{:id=>2, :number=>20}]
   end
   
-  cspecify "should fetch correctly with a limit and offset without an order", :mssql do
+  specify "should fetch correctly with a limit and offset for different combinations of from and join tables" do
+    @db.create_table!(:items2){primary_key :id2; Integer :number2}
+    @db[:items2].insert(:number2=>10)
+    @ds.from(:items, :items2).order(:id).limit(2, 0).all.should == [{:id=>1, :number=>10, :id2=>1, :number2=>10}]
+    @ds.from(:items___i, :items2___i2).order(:id).limit(2, 0).all.should == [{:id=>1, :number=>10, :id2=>1, :number2=>10}]
+    @ds.cross_join(:items2).order(:id).limit(2, 0).all.should ==[{:id=>1, :number=>10, :id2=>1, :number2=>10}]
+    @ds.from(:items___i).cross_join(:items2___i2).order(:id).limit(2, 0).all.should == [{:id=>1, :number=>10, :id2=>1, :number2=>10}]
+    @ds.cross_join(:items2___i).cross_join(@db[:items2].select(:id2___id3, :number2___number3)).order(:id).limit(2, 0).all.should == [{:id=>1, :number=>10, :id2=>1, :number2=>10, :id3=>1, :number3=>10}]
+
+    @ds.from(:items, :items2).order(:id).limit(2, 1).all.should == []
+    @ds.from(:items___i, :items2___i2).order(:id).limit(2, 1).all.should == []
+    @ds.cross_join(:items2).order(:id).limit(2, 1).all.should == []
+    @ds.from(:items___i).cross_join(:items2___i2).order(:id).limit(2, 1).all.should == []
+    @ds.cross_join(:items2___i).cross_join(@db[:items2].select(:id2___id3, :number2___number3)).order(:id).limit(2, 1).all.should == []
+    @db.drop_table(:items2)
+  end
+  
+  cspecify "should fetch correctly with a limit and offset without an order", :db2, :mssql do
     @ds.limit(2, 1).all.should == []
   end
 
@@ -284,7 +311,7 @@ describe "Simple Dataset operations in transactions" do
     INTEGRATION_DB.drop_table(:items_insert_in_transaction)
   end
 
-  cspecify "should insert correctly with a primary key specified inside a transaction", :mssql do
+  cspecify "should insert correctly with a primary key specified inside a transaction", :db2, :mssql do
     INTEGRATION_DB.transaction do
       @ds.insert(:id=>100, :number=>20)
       @ds.count.should == 1
@@ -400,7 +427,7 @@ if INTEGRATION_DB.dataset.supports_cte?
       @db[:t].with(:t, @ds.filter(:parent_id=>nil).select(:id)).order(:id).map(:id).should == [1, 2]
     end
     
-    specify "should give correct results for recursive WITH" do
+    cspecify "should give correct results for recursive WITH", :db2 do
       ds = @db[:t].select(:i___id, :pi___parent_id).with_recursive(:t, @ds.filter(:parent_id=>nil), @ds.join(:t, :i=>:parent_id).select(:i1__id, :i1__parent_id), :args=>[:i, :pi])
       ds.all.should == [{:parent_id=>nil, :id=>1}, {:parent_id=>nil, :id=>2}, {:parent_id=>1, :id=>3}, {:parent_id=>1, :id=>4}, {:parent_id=>3, :id=>5}, {:parent_id=>5, :id=>6}]
       ps = @db[:t].select(:i___id, :pi___parent_id).with_recursive(:t, @ds.filter(:parent_id=>:$n), @ds.join(:t, :i=>:parent_id).filter(:t__i=>:parent_id).select(:i1__id, :i1__parent_id), :args=>[:i, :pi]).prepare(:select, :cte_sel)
@@ -457,20 +484,12 @@ if INTEGRATION_DB.dataset.supports_window_functions?
     cspecify "should give correct results for aggregate window functions with frames", :mssql do
       @ds.select(:id){sum(:over, :args=>amount, :partition=>group_id, :order=>id, :frame=>:all){}.as(:sum)}.all.should ==
         [{:sum=>111, :id=>1}, {:sum=>111, :id=>2}, {:sum=>111, :id=>3}, {:sum=>111000, :id=>4}, {:sum=>111000, :id=>5}, {:sum=>111000, :id=>6}]
-      @ds.select(:id){sum(:over, :args=>amount, :partition=>group_id, :frame=>:all){}.as(:sum)}.all.should ==
-        [{:sum=>111, :id=>1}, {:sum=>111, :id=>2}, {:sum=>111, :id=>3}, {:sum=>111000, :id=>4}, {:sum=>111000, :id=>5}, {:sum=>111000, :id=>6}]
       @ds.select(:id){sum(:over, :args=>amount, :order=>id, :frame=>:all){}.as(:sum)}.all.should ==
-        [{:sum=>111111, :id=>1}, {:sum=>111111, :id=>2}, {:sum=>111111, :id=>3}, {:sum=>111111, :id=>4}, {:sum=>111111, :id=>5}, {:sum=>111111, :id=>6}]
-      @ds.select(:id){sum(:over, :args=>amount, :frame=>:all){}.as(:sum)}.all.should ==
         [{:sum=>111111, :id=>1}, {:sum=>111111, :id=>2}, {:sum=>111111, :id=>3}, {:sum=>111111, :id=>4}, {:sum=>111111, :id=>5}, {:sum=>111111, :id=>6}]
         
       @ds.select(:id){sum(:over, :args=>amount, :partition=>group_id, :order=>id, :frame=>:rows){}.as(:sum)}.all.should ==
         [{:sum=>1, :id=>1}, {:sum=>11, :id=>2}, {:sum=>111, :id=>3}, {:sum=>1000, :id=>4}, {:sum=>11000, :id=>5}, {:sum=>111000, :id=>6}]
-      @ds.select(:id){sum(:over, :args=>amount, :partition=>group_id, :frame=>:rows){}.as(:sum)}.all.should ==
-        [{:sum=>1, :id=>1}, {:sum=>11, :id=>2}, {:sum=>111, :id=>3}, {:sum=>1000, :id=>4}, {:sum=>11000, :id=>5}, {:sum=>111000, :id=>6}]
       @ds.select(:id){sum(:over, :args=>amount, :order=>id, :frame=>:rows){}.as(:sum)}.all.should ==
-        [{:sum=>1, :id=>1}, {:sum=>11, :id=>2}, {:sum=>111, :id=>3}, {:sum=>1111, :id=>4}, {:sum=>11111, :id=>5}, {:sum=>111111, :id=>6}]
-      @ds.select(:id){sum(:over, :args=>amount, :frame=>:rows){}.as(:sum)}.all.should ==
         [{:sum=>1, :id=>1}, {:sum=>11, :id=>2}, {:sum=>111, :id=>3}, {:sum=>1111, :id=>4}, {:sum=>11111, :id=>5}, {:sum=>111111, :id=>6}]
     end
   end
@@ -599,7 +618,7 @@ describe "Sequel::Dataset convenience methods" do
     @ds.group_and_count(:a___c).order(:count).all.each{|h| h[:count] = h[:count].to_i}.should == [{:c=>30, :count=>1}, {:c=>20, :count=>2}]
   end
   
-  cspecify "#range should return the range between the maximum and minimum values", :sqlite do
+  specify "#range should return the range between the maximum and minimum values" do
     @ds = @ds.unordered
     @ds.insert(20, 10)
     @ds.insert(30, 10)
@@ -724,7 +743,7 @@ describe "Sequel::Dataset DSL support" do
     @ds.get{~b.sql_number}.to_i.should == -4
   end
   
-  cspecify "should work with the bitwise xor operator", :sqlite do
+  specify "should work with the bitwise xor operator" do
     @ds.insert(3, 5)
     @ds.get{a.sql_number ^ b}.to_i.should == 6
   end
@@ -817,7 +836,7 @@ describe "Sequel::Dataset DSL support" do
     @ds.filter({15=>20}.case(0, :a) > 0).all.should == []
   end
   
-  it "should work with multiple value arrays" do
+  specify "should work with multiple value arrays" do
     @ds.insert(20, 10)
     @ds.quote_identifiers = false
     @ds.filter([:a, :b]=>[[20, 10]].sql_array).all.should == [{:a=>20, :b=>10}]
@@ -886,12 +905,16 @@ describe "SQL Extract Function" do
     @db.drop_table(:a)
   end
   
-  cspecify "should return the part of the datetime asked for", :sqlite, :mssql do
+  specify "should return the part of the datetime asked for" do
     t = Time.now
+    def @ds.supports_timestamp_timezones?() false end
     @ds.insert(t)
     @ds.get{a.extract(:year)}.should == t.year
     @ds.get{a.extract(:month)}.should == t.month
     @ds.get{a.extract(:day)}.should == t.day
+    @ds.get{a.extract(:hour)}.should == t.hour
+    @ds.get{a.extract(:minute)}.should == t.min
+    @ds.get{a.extract(:second)}.to_i.should == t.sec
   end
 end
 

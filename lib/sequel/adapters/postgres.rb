@@ -93,11 +93,7 @@ module Sequel
       def bytea(s) ::Sequel::SQL::Blob.new(Adapter.unescape_bytea(s)) end
       def integer(s) s.to_i end
       def float(s) s.to_f end
-      def numeric(s) ::BigDecimal.new(s) end
-      def date(s) ::Sequel.string_to_date(s) end
-      def date_iso(s) ::Date.new(*s.split("-").map{|x| x.to_i}) end
-      def time(s) ::Sequel.string_to_time(s) end
-      def timestamp(s) ::Sequel.database_to_application_timestamp(s) end
+      def date(s) ::Date.new(*s.split("-").map{|x| x.to_i}) end
     end.new
 
     # Hash with type name symbols and callable values for converting PostgreSQL types.
@@ -112,9 +108,9 @@ module Sequel
       [17] => tt.method(:bytea),
       [20, 21, 22, 23, 26] => tt.method(:integer),
       [700, 701] => tt.method(:float),
-      [790, 1700] => tt.method(:numeric),
-      [1083, 1266] => tt.method(:time),
-      [1114, 1184] => tt.method(:timestamp)
+      [790, 1700] => ::BigDecimal.method(:new),
+      [1083, 1266] => ::Sequel.method(:string_to_time),
+      [1114, 1184] => ::Sequel.method(:database_to_application_timestamp)
     }.each do |k,v|
       k.each{|n| PG_TYPES[n] = v}
     end
@@ -128,7 +124,7 @@ module Sequel
 
     # Modify the type translator for the date type depending on the value given.
     def self.use_iso_date_format=(v)
-      PG_TYPES[1082] = TYPE_TRANSLATOR.method(v ? :date_iso : :date)
+      PG_TYPES[1082] = v ? TYPE_TRANSLATOR.method(:date) : Sequel.method(:string_to_date)
       @use_iso_date_format = v
     end
     self.use_iso_date_format = true
@@ -136,7 +132,10 @@ module Sequel
     # PGconn subclass for connection specific methods used with the
     # pg, postgres, or postgres-pr driver.
     class Adapter < ::PGconn
+      DISCONNECT_ERROR_RE = /\Acould not receive data from server: Software caused connection abort/
+      
       include Sequel::Postgres::AdapterMethods
+
       self.translate_results = false if respond_to?(:translate_results=)
       
       # Hash of prepared statements for this connection.  Keys are
@@ -155,20 +154,23 @@ module Sequel
         end
         @prepared_statements = {} if SEQUEL_POSTGRES_USES_PG
       end
-      
+
       # Raise a Sequel::DatabaseDisconnectError if a PGError is raised and
       # the connection status cannot be determined or it is not OK.
       def check_disconnect_errors
         begin
           yield
         rescue PGError =>e
+          disconnect = false
           begin
             s = status
           rescue PGError
-            raise Sequel.convert_exception_class(e, Sequel::DatabaseDisconnectError)
+            disconnect = true
           end
           status_ok = (s == Adapter::CONNECTION_OK)
-          status_ok ? raise : raise(Sequel.convert_exception_class(e, Sequel::DatabaseDisconnectError))
+          disconnect ||= !status_ok
+          disconnect ||= e.message =~ DISCONNECT_ERROR_RE
+          disconnect ? raise(Sequel.convert_exception_class(e, Sequel::DatabaseDisconnectError)) : raise
         ensure
           block if status_ok
         end
@@ -181,7 +183,7 @@ module Sequel
         begin
           block_given? ? yield(q) : q.cmd_tuples
         ensure
-          q.clear
+          q.clear if q
         end
       end
 

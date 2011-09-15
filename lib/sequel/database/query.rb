@@ -1,7 +1,7 @@
 module Sequel
   class Database
     # ---------------------
-    # :section: Methods that execute queries and/or return results
+    # :section: 1 - Methods that execute queries and/or return results
     # This methods generally execute SQL code on the database server.
     # ---------------------
 
@@ -82,12 +82,12 @@ module Sequel
     #
     #   DB.get(1) # SELECT 1
     #   # => 1
-    #   DB.get{version{}} # SELECT server_version()
+    #   DB.get{server_version{}} # SELECT server_version()
     def get(*args, &block)
       dataset.get(*args, &block)
     end
     
-    # Return a hash containing index information. Hash keys are index name symbols.
+    # Return a hash containing index information for the table. Hash keys are index name symbols.
     # Values are subhashes with two keys, :columns and :unique.  The value of :columns
     # is an array of symbols of column names.  The value of :unique is true or false
     # depending on if the index is unique.
@@ -110,7 +110,6 @@ module Sequel
       nil
     end
     
-    # Parse the schema from the database.
     # Returns the schema for the given table as an array with all members being arrays of length 2,
     # the first member being the column name, and the second member being a hash of column information.
     # Available options are:
@@ -129,7 +128,8 @@ module Sequel
     #                 it means that primary key information is unavailable, not that the column
     #                 is not a primary key.
     # :ruby_default :: The database default for the column, as a ruby object.  In many cases, complex
-    #                  database defaults cannot be parsed into ruby objects.
+    #                  database defaults cannot be parsed into ruby objects, in which case nil will be
+    #                  used as the value.
     # :type :: A symbol specifying the type, such as :integer or :string.
     #
     # Example:
@@ -169,13 +169,14 @@ module Sequel
     # to the database.
     #
     #   DB.table_exists?(:foo) # => false
+    #   # SELECT * FROM foo LIMIT 1
     def table_exists?(name)
-      begin 
-        from(name).first
-        true
-      rescue
-        false
-      end
+      sch, table_name = schema_and_table(name)
+      name = SQL::QualifiedIdentifier.new(sch, table_name) if sch
+      from(name).first
+      true
+    rescue
+      false
     end
     
     # Return all tables in the database as an array of symbols.
@@ -230,12 +231,12 @@ module Sequel
         yield(conn)
       rescue Exception => e
         rollback_transaction(t, opts) if t
-        transaction_error(e)
+        transaction_error(e, :conn=>conn)
       ensure
         begin
           commit_or_rollback_transaction(e, t, opts)
         rescue Exception => e
-          raise_error(e, :classes=>database_error_classes)
+          raise_error(e, :classes=>database_error_classes, :conn=>conn)
         ensure
           remove_transaction(t)
         end
@@ -470,7 +471,7 @@ module Sequel
         :float
       when /\A(?:(?:(?:num(?:ber|eric)?|decimal)(?:\(\d+,\s*(\d+)\))?)|(?:small)?money)\z/io
         $1 && $1 == '0' ? :integer : :decimal
-      when /bytea|blob|image|(var)?binary/io
+      when /bytea|[bc]lob|image|(var)?binary/io
         :blob
       when /\Aenum/io
         :enum
@@ -490,8 +491,8 @@ module Sequel
     end
 
     # Raise a database error unless the exception is an Rollback.
-    def transaction_error(e)
-      raise_error(e, :classes=>database_error_classes) unless e.is_a?(Rollback)
+    def transaction_error(e, opts={})
+      raise_error(e, opts.merge(:classes=>database_error_classes)) unless e.is_a?(Rollback)
     end
   end
 end

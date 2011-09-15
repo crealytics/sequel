@@ -622,10 +622,18 @@ describe "Dataset#where" do
   end
 
   specify "should accept true and false as arguments" do
-    @dataset.filter(true).sql.should ==
-      "SELECT * FROM test WHERE 't'"
-    @dataset.filter(false).sql.should ==
-      "SELECT * FROM test WHERE 'f'"
+    @dataset.filter(true).sql.should == "SELECT * FROM test WHERE 't'"
+    @dataset.filter(Sequel::SQLTRUE).sql.should == "SELECT * FROM test WHERE 't'"
+    @dataset.filter(false).sql.should == "SELECT * FROM test WHERE 'f'"
+    @dataset.filter(Sequel::SQLFALSE).sql.should == "SELECT * FROM test WHERE 'f'"
+  end
+
+  specify "should use boolean expression if dataset does not support where true/false" do
+    def @dataset.supports_where_true?() false end
+    @dataset.filter(true).sql.should == "SELECT * FROM test WHERE (1 = 1)"
+    @dataset.filter(Sequel::SQLTRUE).sql.should == "SELECT * FROM test WHERE (1 = 1)"
+    @dataset.filter(false).sql.should == "SELECT * FROM test WHERE (1 = 0)"
+    @dataset.filter(Sequel::SQLFALSE).sql.should == "SELECT * FROM test WHERE (1 = 0)"
   end
 
   specify "should allow the use of multiple arguments" do
@@ -1020,6 +1028,12 @@ describe "Dataset#literal" do
     d.literal(d).should == "(#{d.sql})"
   end
   
+  specify "should literalize Sequel::SQLTime properly" do
+    t = Sequel::SQLTime.now
+    s = t.strftime("'%H:%M:%S")
+    @dataset.literal(t).should == "#{s}.#{sprintf('%06i', t.usec)}'"
+  end
+  
   specify "should literalize Time properly" do
     t = Time.now
     s = t.strftime("'%Y-%m-%d %H:%M:%S")
@@ -1293,6 +1307,32 @@ describe "Dataset#select_all" do
   
   specify "should select all columns all tables if given a multiple arguments" do
     @d.select_all(:test, :foo).sql.should == 'SELECT test.*, foo.* FROM test'
+  end
+  
+  specify "should work correctly with qualified symbols" do
+    @d.select_all(:sch__test).sql.should == 'SELECT sch.test.* FROM test'
+  end
+  
+  specify "should work correctly with aliased symbols" do
+    @d.select_all(:test___al).sql.should == 'SELECT al.* FROM test'
+    @d.select_all(:sch__test___al).sql.should == 'SELECT al.* FROM test'
+  end
+  
+  specify "should work correctly with SQL::Identifiers" do
+    @d.select_all(:test.identifier).sql.should == 'SELECT test.* FROM test'
+  end
+  
+  specify "should work correctly with SQL::QualifiedIdentifier" do
+    @d.select_all(:test.qualify(:sch)).sql.should == 'SELECT sch.test.* FROM test'
+  end
+  
+  specify "should work correctly with SQL::AliasedExpressions" do
+    @d.select_all(:test.as(:al)).sql.should == 'SELECT al.* FROM test'
+  end
+  
+  specify "should work correctly with SQL::JoinClauses" do
+    d = @d.cross_join(:foo).cross_join(:test___al)
+    @d.select_all(*d.opts[:join]).sql.should == 'SELECT foo.*, al.* FROM test'
   end
 end
 
@@ -2171,6 +2211,12 @@ describe "Dataset#join_table" do
     @d.join(:categories, [:id]).sql.should == 'SELECT * FROM "items" INNER JOIN "categories" ON ("categories"."id" = "items"."id")'
   end
 
+  specify "should hoist WITH clauses from subqueries if the dataset doesn't support CTEs in subselects" do
+    @d.meta_def(:supports_cte?){true}
+    @d.meta_def(:supports_cte_in_subselect?){false}
+    @d.join(Sequel::Dataset.new(nil).from(:categories).with(:a, Sequel::Dataset.new(nil).from(:b)), [:id]).sql.should == 'WITH "a" AS (SELECT * FROM b) SELECT * FROM "items" INNER JOIN (SELECT * FROM categories) AS "t1" USING ("id")'
+  end
+
   specify "should raise an error if using an array of symbols with a block" do
     proc{@d.join(:categories, [:id]){|j,lj,js|}}.should raise_error(Sequel::Error)
   end
@@ -2244,7 +2290,6 @@ describe "Dataset#join_table" do
     @d.from(:items.as(:i)).join(:categories.as(:c), {:category_id => :id}, {:table_alias=>:c2, :implicit_qualifier=>:i2}).sql.should ==
       'SELECT * FROM "items" AS "i" INNER JOIN "categories" AS "c2" ON ("c2"."category_id" = "i2"."id")'
   end
-  
   
   specify "should not allow insert, update, delete, or truncate" do
     proc{@d.join(:categories, :a=>:d).insert_sql}.should raise_error(Sequel::InvalidOperation)

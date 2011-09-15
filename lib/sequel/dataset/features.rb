@@ -1,7 +1,7 @@
 module Sequel
   class Dataset
     # ---------------------
-    # :section: Methods that describe what the dataset supports
+    # :section: 4 - Methods that describe what the dataset supports
     # These methods all return booleans, with most describing whether or not the
     # dataset supports a feature.
     # ---------------------
@@ -11,7 +11,13 @@ module Sequel
     
     # Whether this dataset quotes identifiers.
     def quote_identifiers?
-      @quote_identifiers
+      if defined?(@quote_identifiers)
+        @quote_identifiers
+      elsif db.respond_to?(:quote_identifiers?)
+        @quote_identifiers = db.quote_identifiers?
+      else
+        @quote_identifiers = false
+      end
     end
     
     # Whether this dataset will provide accurate number of rows matched for
@@ -30,6 +36,13 @@ module Sequel
     # Whether the dataset supports common table expressions (the WITH clause).
     def supports_cte?
       select_clause_methods.include?(WITH_SUPPORTED)
+    end
+
+    # Whether the dataset supports common table expressions (the WITH clause)
+    # in subqueries.  If false, applies the WITH clause to the main query, which can cause issues
+    # if multiple WITH clauses use the same name.
+    def supports_cte_in_subqueries?
+      false
     end
 
     # Whether the dataset supports the DISTINCT ON clause, false by default.
@@ -87,6 +100,12 @@ module Sequel
     # Whether the dataset supports window functions.
     def supports_window_functions?
       false
+    end
+    
+    # Whether the dataset supports WHERE TRUE (or WHERE 1 for databases that
+    # that use 1 for true).
+    def supports_where_true?
+      true
     end
   end
 end

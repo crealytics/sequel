@@ -12,11 +12,18 @@ describe "Sequel::Model()" do
     c.dataset.should == ds
   end
 
-  it "should return a model subclass with a dataset with the default database and given table name if given a symbol" do
+  it "should return a model subclass with a dataset with the default database and given table name if given a Symbol" do
     c = Sequel::Model(:blah)
     c.superclass.should == Sequel::Model
     c.db.should == @db
     c.table_name.should == :blah
+  end
+
+  it "should return a model subclass with a dataset with the default database and given table name if given a LiteralString" do
+    c = Sequel::Model('blah'.lit)
+    c.superclass.should == Sequel::Model
+    c.db.should == @db
+    c.table_name.should == 'blah'.lit
   end
 
   it "should return a model subclass with a dataset with the default database and given table name if given an SQL::Identifier" do
@@ -38,6 +45,13 @@ describe "Sequel::Model()" do
     c.superclass.should == Sequel::Model
     c.db.should == @db
     c.table_name.should == :boo
+  end
+
+  it "should return a model subclass with the given dataset if given a dataset using an SQL::Identifier" do
+    ds = @db[:blah.identifier]
+    c = Sequel::Model(ds)
+    c.superclass.should == Sequel::Model
+    c.dataset.should == ds
   end
 
   it "should return a model subclass associated to the given database if given a database" do
@@ -98,6 +112,13 @@ describe "Sequel::Model()" do
         class ::Album < Sequel::Model(@db[:table]); end
       end.should_not raise_error
     end
+
+    it "should work without raising an exception with a dataset with an SQL::Identifier" do
+      proc do
+        class ::Album < Sequel::Model(@db[:table.identifier]); end
+        class ::Album < Sequel::Model(@db[:table.identifier]); end
+      end.should_not raise_error
+    end
   end
 end
 
@@ -148,10 +169,16 @@ describe Sequel::Model, "dataset & schema" do
     @model.table_name.should == :foo
   end
 
-  it "set_dataset should take a symbol" do
+  it "set_dataset should take a Symbol" do
     @model.db = MODEL_DB
     @model.set_dataset(:foo)
     @model.table_name.should == :foo
+  end
+
+  it "set_dataset should take a LiteralString" do
+    @model.db = MODEL_DB
+    @model.set_dataset('foo'.lit)
+    @model.table_name.should == 'foo'.lit
   end
 
   it "set_dataset should take an SQL::Identifier" do

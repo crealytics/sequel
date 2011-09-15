@@ -11,9 +11,9 @@ module Sequel
   #             with the +Database+ in +source+ to create the
   #             dataset to use) 
   # Dataset :: Sets the dataset for this model to +source+. 
-  # Symbol :: Sets the table name for this model to +source+. The
-  #           class will use the default database for model
-  #           classes in order to create the dataset.
+  # other :: Sets the table name for this model to +source+. The
+  #          class will use the default database for model
+  #          classes in order to create the dataset.
   #
   # The purpose of this method is to set the dataset/database automatically
   # for a model class, if the table name doesn't match the implicit
@@ -49,10 +49,11 @@ module Sequel
   # called directly on the class.  Model datasets return rows as model instances,
   # which have fairly standard ORM instance behavior.
   #
-  # <tt>Sequel::Model</tt> is built completely out of plugins, the only method not part of a
-  # plugin is the plugin method itself.  Plugins can override any class, instance, or
-  # dataset method defined by a previous plugin and call super to get the default
-  # behavior.
+  # <tt>Sequel::Model</tt> is built completely out of plugins.  Plugins can override any class,
+  # instance, or dataset method defined by a previous plugin and call super to get the default
+  # behavior.  By default, <tt>Sequel::Model</tt> loads two plugins, <tt>Sequel::Model</tt>
+  # (which is itself a plugin) for the base support, and <tt>Sequel::Model::Associations</tt>
+  # for the associations support.
   #
   # You can set the +SEQUEL_NO_ASSOCIATIONS+ constant or environment variable to
   # make Sequel not load the associations plugin by default.

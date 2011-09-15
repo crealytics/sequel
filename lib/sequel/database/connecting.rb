@@ -1,12 +1,12 @@
 module Sequel
   class Database
     # ---------------------
-    # :section: Methods relating to adapters, connecting, disconnecting, and sharding
+    # :section: 4 - Methods relating to adapters, connecting, disconnecting, and sharding
     # This methods involve the Database's connection pool.
     # ---------------------
 
     # Array of supported database adapters
-    ADAPTERS = %w'ado amalgalite db2 dbi do firebird informix jdbc mysql mysql2 odbc openbase oracle postgres sqlite swift tinytds'.collect{|x| x.to_sym}
+    ADAPTERS = %w'ado amalgalite db2 dbi do firebird ibmdb informix jdbc mysql mysql2 odbc openbase oracle postgres sqlite swift tinytds'.collect{|x| x.to_sym}
 
     # Whether to use the single threaded connection pool by default
     @@single_threaded = false
@@ -155,8 +155,8 @@ module Sequel
     
     # Disconnects all available connections from the connection pool.  Any
     # connections currently in use will not be disconnected. Options:
-    # * :servers - Should be a symbol specifing the server to disconnect from,
-    #   or an array of symbols to specify multiple servers.
+    # :servers :: Should be a symbol specifing the server to disconnect from,
+    #             or an array of symbols to specify multiple servers.
     #
     # Example:
     #

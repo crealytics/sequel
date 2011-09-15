@@ -1,7 +1,7 @@
 module Sequel
   class Dataset
     # ---------------------
-    # :section: Mutation methods
+    # :section: 7 - Mutation methods
     # These methods modify the receiving dataset and should be used with care.
     # ---------------------
     
@@ -21,10 +21,10 @@ module Sequel
     def_mutation_method(*MUTATION_METHODS)
     
     # Set the method to call on identifiers going into the database for this dataset
-    attr_accessor :identifier_input_method
+    attr_writer :identifier_input_method
     
     # Set the method to call on identifiers coming the database for this dataset
-    attr_accessor :identifier_output_method
+    attr_writer :identifier_output_method
 
     # Whether to quote identifiers for this dataset
     attr_writer :quote_identifiers

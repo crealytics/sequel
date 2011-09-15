@@ -1,13 +1,13 @@
 module Sequel
   class Database
     # ---------------------
-    # :section: Miscellaneous methods
+    # :section: 7 - Miscellaneous methods
     # These methods don't fit neatly into another category.
     # ---------------------
 
     # Converts a uri to an options hash. These options are then passed
     # to a newly created database object. 
-    def self.uri_to_options(uri) # :nodoc:
+    def self.uri_to_options(uri)
       { :user => uri.user,
         :password => uri.password,
         :host => uri.host,
@@ -181,12 +181,17 @@ module Sequel
     def database_error_classes
       []
     end
+
+    # Return true if exception represents a disconnect error, false otherwise.
+    def disconnect_error?(exception, opts)
+      opts[:disconnect]
+    end
     
     # Convert the given exception to a DatabaseError, keeping message
     # and traceback.
     def raise_error(exception, opts={})
       if !opts[:classes] || Array(opts[:classes]).any?{|c| exception.is_a?(c)}
-        raise Sequel.convert_exception_class(exception, opts[:disconnect] ? DatabaseDisconnectError : DatabaseError)
+        raise Sequel.convert_exception_class(exception, disconnect_error?(exception, opts) ? DatabaseDisconnectError : DatabaseError)
       else
         raise exception
       end
@@ -210,10 +215,10 @@ module Sequel
     # Typecast the value to a Date
     def typecast_value_date(value)
       case value
-      when Date
-        value
       when DateTime, Time
         Date.new(value.year, value.month, value.day)
+      when Date
+        value
       when String
         Sequel.string_to_date(value)
       when Hash
@@ -225,12 +230,7 @@ module Sequel
 
     # Typecast the value to a DateTime or Time depending on Sequel.datetime_class
     def typecast_value_datetime(value)
-      klass = Sequel.datetime_class
-      if value.is_a?(Hash)
-        klass.send(klass == Time ? :mktime : :new, *[:year, :month, :day, :hour, :minute, :second].map{|x| (value[x] || value[x.to_s]).to_i})
-      else
-        Sequel.typecast_to_application_timestamp(value)
-      end
+      Sequel.typecast_to_application_timestamp(value)
     end
 
     # Typecast the value to a BigDecimal
@@ -250,9 +250,21 @@ module Sequel
       Float(value)
     end
 
-    # Typecast the value to an Integer
-    def typecast_value_integer(value)
-      Integer(value)
+    # Used for checking/removing leading zeroes from strings so they don't get
+    # interpreted as octal.
+    LEADING_ZERO_RE = /\A0+(\d)/.freeze
+    if RUBY_VERSION >= '1.9'
+      # Typecast the value to an Integer
+      def typecast_value_integer(value)
+        (value.is_a?(String) && value =~ LEADING_ZERO_RE) ? Integer(value, 10) : Integer(value)
+      end
+    else
+      # Replacement string when replacing leading zeroes.
+      LEADING_ZERO_REP = "\\1".freeze 
+      # Typecast the value to an Integer
+      def typecast_value_integer(value)
+        Integer(value.is_a?(String) ? value.sub(LEADING_ZERO_RE, LEADING_ZERO_REP) : value)
+      end
     end
 
     # Typecast the value to a String
@@ -263,13 +275,15 @@ module Sequel
     # Typecast the value to a Time
     def typecast_value_time(value)
       case value
-      when Time
+      when SQLTime
         value
+      when Time
+        SQLTime.local(value.year, value.month, value.day, value.hour, value.min, value.sec, value.respond_to?(:nsec) ? value.nsec : value.usec)
       when String
         Sequel.string_to_time(value)
       when Hash
         t = Time.now
-        Time.mktime(t.year, t.month, t.day, *[:hour, :minute, :second].map{|x| (value[x] || value[x.to_s]).to_i})
+        SQLTime.local(t.year, t.month, t.day, *[:hour, :minute, :second].map{|x| (value[x] || value[x.to_s]).to_i})
       else
         raise Sequel::InvalidValue, "invalid value for Time: #{value.inspect}"
       end

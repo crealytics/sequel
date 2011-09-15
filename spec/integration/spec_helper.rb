@@ -49,6 +49,7 @@ end
   end
 
   def self.cspecify(message, *checked, &block)
+    return specify(message, &block) if ENV['SEQUEL_NO_PENDING']
     pending = false
     checked.each do |c|
       case c
@@ -88,4 +89,13 @@ if defined?(INTEGRATION_DB) || defined?(INTEGRATION_URL) || ENV['SEQUEL_INTEGRAT
   end
 else
   INTEGRATION_DB = Sequel.sqlite('', :quote_identifiers=>false)
+end
+
+if INTEGRATION_DB.adapter_scheme == :ibmdb
+  def INTEGRATION_DB.drop_table(*tables)
+    super
+  rescue Sequel::DatabaseError
+    disconnect
+    super
+  end
 end

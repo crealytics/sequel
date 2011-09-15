@@ -6,7 +6,7 @@ describe "Supported types" do
     INTEGRATION_DB[:items]
   end
 
-  cspecify "should support casting correctly", [:sqlite, :sqlite] do
+  specify "should support casting correctly" do
     ds = create_items_table_with_column(:number, Integer)
     ds.insert(:number => 1)
     ds.select(:number.cast_string.as(:n)).map(:n).should == %w'1'
@@ -68,11 +68,18 @@ describe "Supported types" do
     ds.first[:dat].to_s.should == d.to_s
   end
   
-  cspecify "should support generic time type", [:do], [:swift], [:odbc], [:jdbc, :mssql], [:tinytds] do
+  cspecify "should support generic time type", [:do], [:swift], [:odbc], [:jdbc, :mssql], [:jdbc, :postgres], [:mysql2], [:tinytds] do
     ds = create_items_table_with_column(:tim, Time, :only_time=>true)
-    t = Time.now
+    t = Sequel::SQLTime.now
     ds.insert(:tim => t)
-    ds.first[:tim].strftime('%H%M%S').should == t.strftime('%H%M%S')
+    v = ds.first[:tim]
+    ds.literal(v).should == ds.literal(t)
+    v.should be_a_kind_of(Sequel::SQLTime)
+    ds.delete
+    ds.insert(:tim => v)
+    v2 = ds.first[:tim]
+    ds.literal(v2).should == ds.literal(t)
+    v2.should be_a_kind_of(Sequel::SQLTime)
   end
   
   cspecify "should support generic datetime type", [:do, :sqlite], [:jdbc, :sqlite] do
@@ -93,7 +100,7 @@ describe "Supported types" do
     ds.first[:name].should be_a_kind_of(::Sequel::SQL::Blob)
   end
   
-  cspecify "should support generic boolean type", [:do, :sqlite], [:jdbc, :sqlite], [:odbc, :mssql] do
+  cspecify "should support generic boolean type", [:do, :sqlite], [:jdbc, :sqlite], [:jdbc, :db2], [:odbc, :mssql] do
     ds = create_items_table_with_column(:number, TrueClass)
     ds.insert(:number => true)
     ds.all.should == [{:number=>true}]

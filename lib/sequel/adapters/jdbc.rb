@@ -80,6 +80,11 @@ module Sequel
         Sequel.ts_require 'adapters/jdbc/informix'
         db.extend(Sequel::JDBC::Informix::DatabaseMethods)
         com.informix.jdbc.IfxDriver
+      end,
+      :db2=>proc do |db|
+        Sequel.ts_require 'adapters/jdbc/db2'
+        db.extend(Sequel::JDBC::DB2::DatabaseMethods)
+        com.ibm.db2.jcc.DB2Driver
       end
     }
     
@@ -285,6 +290,12 @@ module Sequel
         c.close
       end
       
+      # Raise a disconnect error if the SQL state of the cause of the exception indicates so.
+      def disconnect_error?(exception, opts)
+        cause = exception.respond_to?(:cause) ? exception.cause : exception
+        super || (cause.respond_to?(:getSQLState) && cause.getSQLState =~ /^08/)
+      end
+
       # Execute the prepared statement.  If the provided name is a
       # dataset, use that as the prepared statement, otherwise use
       # it as a key to look it up in the prepared_statements hash.
@@ -398,12 +409,6 @@ module Sequel
             result.close
           end
         end
-      end
-
-      # Treat SQLExceptions with a "Connection Error" SQLState as disconnects
-      def raise_error(exception, opts={})
-        cause = exception.respond_to?(:cause) ? exception.cause : exception
-        super(exception, {:disconnect => cause.respond_to?(:getSQLState) && cause.getSQLState =~ /^08/}.merge(opts))
       end
 
       # Java being java, you need to specify the type of each argument
@@ -579,8 +584,10 @@ module Sequel
       # Convert the type.  Used for converting Java types to ruby types.
       def convert_type(v)
         case v
-        when Java::JavaSQL::Timestamp, Java::JavaSQL::Time
+        when Java::JavaSQL::Timestamp
           Sequel.database_to_application_timestamp(v.to_string)
+        when Java::JavaSQL::Time
+          Sequel.string_to_time(v.to_string)
         when Java::JavaSQL::Date
           Sequel.string_to_date(v.to_string)
         when Java::JavaIo::BufferedReader
@@ -593,6 +600,8 @@ module Sequel
           Sequel::SQL::Blob.new(String.from_java_bytes(v))
         when Java::JavaSQL::Blob
           convert_type(v.getBytes(1, v.length))
+        when Java::JavaSQL::Clob
+          Sequel::SQL::Blob.new(v.getSubString(1, v.length))
         else
           v
         end

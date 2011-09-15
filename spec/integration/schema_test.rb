@@ -6,18 +6,21 @@ describe "Database schema parser" do
     @iom = INTEGRATION_DB.identifier_output_method
     @iim = INTEGRATION_DB.identifier_input_method
     @defsch = INTEGRATION_DB.default_schema
+    @qi = INTEGRATION_DB.quote_identifiers?
     clear_sqls
   end
   after do
     INTEGRATION_DB.identifier_output_method = @iom
     INTEGRATION_DB.identifier_input_method = @iim
     INTEGRATION_DB.default_schema = @defsch
+    INTEGRATION_DB.quote_identifiers = @qi
     INTEGRATION_DB.drop_table(:items) if INTEGRATION_DB.table_exists?(:items)
   end
 
   specify "should handle a database with a identifier_output_method" do
     INTEGRATION_DB.identifier_output_method = :reverse
     INTEGRATION_DB.identifier_input_method = :reverse
+    INTEGRATION_DB.quote_identifiers = true
     INTEGRATION_DB.default_schema = nil if INTEGRATION_DB.default_schema
     INTEGRATION_DB.create_table!(:items){Integer :number}
     INTEGRATION_DB.schema(:items, :reload=>true).should be_a_kind_of(Array)
@@ -85,7 +88,7 @@ describe "Database schema parser" do
     INTEGRATION_DB.schema(:items).first.last[:ruby_default].should == 'blah'
   end
 
-  specify "should parse types from the schema properly" do
+  cspecify "should parse types from the schema properly", [:jdbc, :db2] do
     INTEGRATION_DB.create_table!(:items){Integer :number}
     INTEGRATION_DB.schema(:items).first.last[:type].should == :integer
     INTEGRATION_DB.create_table!(:items){Fixnum :number}
@@ -233,7 +236,7 @@ describe "Database schema modifiers" do
   specify "should add columns to tables correctly" do
     @db.create_table!(:items){Integer :number}
     @ds.insert(:number=>10)
-    @db.alter_table(:items){add_column :name, :text}
+    @db.alter_table(:items){add_column :name, String}
     @db.schema(:items, :reload=>true).map{|x| x.first}.should == [:number, :name]
     @ds.columns!.should == [:number, :name]
     @ds.all.should == [{:number=>10, :name=>nil}]
@@ -246,6 +249,15 @@ describe "Database schema modifiers" do
     @db.schema(:items, :reload=>true).map{|x| x.first}.should == [:number, :id]
     @ds.columns!.should == [:number, :id]
     @ds.map(:number).should == [10]
+    proc{@ds.insert(:id=>@ds.map(:id).first)}.should raise_error
+  end
+
+  cspecify "should drop primary key constraints from tables correctly", :sqlite do
+    @db.create_table!(:items){Integer :number; primary_key [:number], :name=>:items_pk}
+    @ds.insert(:number=>10)
+    @db.alter_table(:items){drop_constraint :items_pk, :type=>:primary_key}
+    @ds.map(:number).should == [10]
+    proc{@ds.insert(10)}.should_not raise_error
   end
 
   specify "should add foreign key columns to tables correctly" do
@@ -287,7 +299,7 @@ describe "Database schema modifiers" do
     proc{@ds.insert(:n=>nil)}.should raise_error(Sequel::DatabaseError)
   end
 
-  specify "should set column NULL/NOT NULL correctly" do
+  cspecify "should set column NULL/NOT NULL correctly", [:jdbc, :db2] do
     @db.create_table!(:items, :engine=>:InnoDB){Integer :id}
     @ds.insert(:id=>10)
     @db.alter_table(:items){set_column_allow_null :id, false}
@@ -309,7 +321,7 @@ describe "Database schema modifiers" do
     @ds.all.should == [{:id=>10}, {:id=>20}]
   end
 
-  specify "should set column types correctly" do
+  cspecify "should set column types correctly", [:jdbc, :db2] do
     @db.create_table!(:items){Integer :id}
     @ds.insert(:id=>10)
     @db.alter_table(:items){set_column_type :id, String}
@@ -319,17 +331,50 @@ describe "Database schema modifiers" do
     @ds.all.should == [{:id=>"10"}, {:id=>"20"}]
   end
 
-  cspecify "should add unique constraints and foreign key table constraints correctly", :sqlite do
-    @db.create_table!(:items){Integer :id; Integer :item_id}
+  cspecify "should add unnamed unique constraints and foreign key table constraints correctly", :sqlite do
+    @db.create_table!(:items, :engine=>:InnoDB){Integer :id; Integer :item_id}
     @db.alter_table(:items) do
       add_unique_constraint [:item_id, :id]
       add_foreign_key [:id, :item_id], :items, :key=>[:item_id, :id]
     end
     @db.schema(:items, :reload=>true).map{|x| x.first}.should == [:id, :item_id]
     @ds.columns!.should == [:id, :item_id]
+    proc{@ds.insert(1, 1)}.should_not raise_error
+    proc{@ds.insert(1, 1)}.should raise_error
+    proc{@ds.insert(1, 2)}.should raise_error
   end
 
-  cspecify "should remove columns from tables correctly", :h2, :mssql do
+  cspecify "should add named unique constraints and foreign key table constraints correctly", :sqlite do
+    @db.create_table!(:items, :engine=>:InnoDB){Integer :id, :null=>false; Integer :item_id, :null=>false}
+    @db.alter_table(:items) do
+      add_unique_constraint [:item_id, :id], :name=>:unique_iii
+      add_foreign_key [:id, :item_id], :items, :key=>[:item_id, :id], :name=>:fk_iii
+    end
+    @db.schema(:items, :reload=>true).map{|x| x.first}.should == [:id, :item_id]
+    @ds.columns!.should == [:id, :item_id]
+    proc{@ds.insert(1, 1)}.should_not raise_error
+    proc{@ds.insert(1, 1)}.should raise_error
+    proc{@ds.insert(1, 2)}.should raise_error
+  end
+
+  cspecify "should drop unique constraints and foreign key table constraints correctly", :sqlite do
+    @db.create_table!(:items) do
+      Integer :id
+      Integer :item_id
+      unique [:item_id, :id], :name=>:items_uk
+      foreign_key [:id, :item_id], :items, :key=>[:item_id, :id], :name=>:items_fk
+    end
+    @db.alter_table(:items) do
+      drop_constraint(:items_fk, :type=>:foreign_key)
+      drop_constraint(:items_uk, :type=>:unique)
+    end
+    @db.schema(:items, :reload=>true).map{|x| x.first}.should == [:id, :item_id]
+    @ds.columns!.should == [:id, :item_id]
+    proc{@ds.insert(1, 2)}.should_not raise_error
+    proc{@ds.insert(1, 2)}.should_not raise_error
+  end
+
+  cspecify "should remove columns from tables correctly", :h2, :mssql, [:jdbc, :db2] do
     @db.create_table!(:items) do
       primary_key :id
       String :name
@@ -350,7 +395,7 @@ describe "Database schema modifiers" do
     @ds.columns!.should == [:id]
   end
 
-  specify "should remove multiple columns in a single alter_table block" do
+  cspecify "should remove multiple columns in a single alter_table block", [:jdbc, :db2] do
     @db.create_table!(:items) do
       primary_key :id
       String :name

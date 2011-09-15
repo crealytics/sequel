@@ -11,7 +11,7 @@ module Sequel
     #   the Model's dataset with the method of the same name with the given arguments.
     module ClassMethods
       # Which columns should be the only columns allowed in a call to a mass assignment method (e.g. set)
-      # (default: not set, so all columns not otherwise restricted).
+      # (default: not set, so all columns not otherwise restricted are allowed).
       attr_reader :allowed_columns
   
       # Array of modules that extend this model's dataset.  Stored
@@ -148,6 +148,26 @@ module Sequel
       def dataset=(ds)
         set_dataset(ds)
       end
+
+      # Extend the dataset with an anonymous module, similar to adding
+      # a plugin with the methods defined in DatasetMethods.  If a block
+      # is given, it is module_evaled.
+      #
+      #   Artist.dataset_module do
+      #     def foo
+      #       :bar
+      #     end
+      #   end
+      #   Artist.dataset.foo
+      #   # => :bar
+      #   Artist.foo
+      #   # => :bar
+      def dataset_module
+        @dataset_module ||= Module.new
+        @dataset_module.module_eval(&Proc.new) if block_given?
+        dataset_extend(@dataset_module)
+        @dataset_module
+      end
     
       # Returns the database associated with the Model class.
       # If this model doesn't have a database associated with it,
@@ -248,6 +268,13 @@ module Sequel
         find(cond) || create(cond, &block)
       end
     
+      # Clear the setter_methods cache when a module is included, as it
+      # may contain setter methods.
+      def include(mod)
+        clear_setter_methods_cache
+        super
+      end
+  
       # If possible, set the dataset for the model subclass as soon as it
       # is created.  Also, make sure the inherited class instance variables
       # are copied into the subclass.
@@ -328,12 +355,7 @@ module Sequel
           m.apply(self, *args, &blk) if m.respond_to?(:apply)
           include(m::InstanceMethods) if plugin_module_defined?(m, :InstanceMethods)
           extend(m::ClassMethods)if plugin_module_defined?(m, :ClassMethods)
-          if plugin_module_defined?(m, :DatasetMethods)
-            dataset.extend(m::DatasetMethods) if @dataset
-            dataset_method_modules << m::DatasetMethods
-            meths = m::DatasetMethods.public_instance_methods.reject{|x| NORMAL_METHOD_NAME_REGEXP !~ x.to_s}
-            def_dataset_method(*meths) unless meths.empty?
-          end
+          dataset_extend(m::DatasetMethods) if plugin_module_defined?(m, :DatasetMethods)
         end
         m.configure(self, *args, &blk) if m.respond_to?(:configure)
       end
@@ -390,8 +412,8 @@ module Sequel
       # setter methods (methods that end in =) that you want to be used during
       # mass assignment, they need to be listed here as well (without the =).
       #
-      # It may be better to use a method such as +set_only+ instead of this in places where
-      # only certain columns may be allowed.
+      # It may be better to use a method such as +set_only+ or +set_fields+ that lets you specify
+      # the allowed fields per call.
       #
       #   Artist.set_allowed_columns(:name, :hometown)
       #   Artist.set(:name=>'Bob', :hometown=>'Sactown') # No Error
@@ -401,10 +423,12 @@ module Sequel
         @allowed_columns = cols
       end
   
-      # Sets the dataset associated with the Model class. +ds+ can be a +Symbol+
-      # (specifying a table name in the current database), or a +Dataset+.
+      # Sets the dataset associated with the Model class. +ds+ can be a +Symbol+,
+      # +LiteralString+, <tt>SQL::Identifier</tt>, <tt>SQL::QualifiedIdentifier</tt>,
+      # <tt>SQL::AliasedExpression</tt>
+      # (all specifying a table name in the current database), or a +Dataset+.
       # If a dataset is used, the model's database is changed to the database of the given
-      # dataset.  If a symbol is used, a dataset is created from the current
+      # dataset.  If a dataset is not used, a dataset is created from the current
       # database with the table name given. Other arguments raise an +Error+.
       # Returns self.
       #
@@ -419,15 +443,15 @@ module Sequel
       def set_dataset(ds, opts={})
         inherited = opts[:inherited]
         @dataset = case ds
-        when Symbol, SQL::Identifier, SQL::QualifiedIdentifier, SQL::AliasedExpression
+        when Symbol, SQL::Identifier, SQL::QualifiedIdentifier, SQL::AliasedExpression, LiteralString
           @simple_table = db.literal(ds)
-          db[ds]
+          db.from(ds)
         when Dataset
           @simple_table = nil
           @db = ds.db
           ds
         else
-          raise(Error, "Model.set_dataset takes one of the following classes as an argument: Symbol, SQL::Identifier, SQL::QualifiedIdentifier, SQL::AliasedExpression, Dataset")
+          raise(Error, "Model.set_dataset takes one of the following classes as an argument: Symbol, LiteralString, SQL::Identifier, SQL::QualifiedIdentifier, SQL::AliasedExpression, Dataset")
         end
         @dataset.row_proc = Proc.new{|r| load(r)}
         @require_modification = Sequel::Model.require_modification.nil? ? @dataset.provides_accurate_rows_matched? : Sequel::Model.require_modification
@@ -445,7 +469,8 @@ module Sequel
     
       # Sets the primary key for this model. You can use either a regular 
       # or a composite primary key.  To not use a primary key, set to nil
-      # or use +no_primary_key+.
+      # or use +no_primary_key+.  On most adapters, Sequel can automatically
+      # determine the primary key to use, so this method is not needed often.
       #
       #   class Person < Sequel::Model
       #     # regular key
@@ -469,10 +494,9 @@ module Sequel
       # If you have any virtual setter methods (methods that end in =) that you
       # want not to be used during mass assignment, they need to be listed here as well (without the =).
       #
-      # It may be better to use a method such as +set_except+ instead of this in places where
-      # certain columns are restricted.  In general, it's better to have a whitelist approach
-      # where you specify only what is allowed, as opposed to a blacklist approach that this
-      # method uses, where everything is allowed other than what you restrict.
+      # It's generally a bad idea to rely on a blacklist approach for security.  Using a whitelist
+      # approach such as set_allowed_columns or the instance level set_only or set_fields methods
+      # is usually a better choice.  So use of this method is generally a bad idea.
       #
       #   Artist.set_restricted_column(:records_sold)
       #   Artist.set(:name=>'Bob', :hometown=>'Sactown') # No Error
@@ -512,6 +536,9 @@ module Sequel
       # 7 days ago.
       #
       # Both the args given and the block are passed to <tt>Dataset#filter</tt>.
+      #
+      # This method creates dataset methods that do not accept arguments.  To create
+      # dataset methods that accept arguments, you have to use def_dataset_method.
       def subset(name, *args, &block)
         def_dataset_method(name){filter(*args, &block)}
       end
@@ -527,6 +554,7 @@ module Sequel
       end
   
       # Allow the setting of the primary key(s) when using the mass assignment methods.
+      # Using this method can open up security issues, be very careful before using it.
       #
       #   Artist.set(:id=>1) # Error
       #   Artist.unrestrict_primary_key
@@ -547,6 +575,16 @@ module Sequel
         rescue
           nil
         end
+      end
+
+      # Add the module to the class's dataset_method_modules.  Extend the dataset with the
+      # module if the model has a dataset.  Add dataset methods to the class for all
+      # public dataset methods.
+      def dataset_extend(mod)
+        dataset.extend(mod) if @dataset
+        dataset_method_modules << mod
+        meths = mod.public_instance_methods.reject{|x| NORMAL_METHOD_NAME_REGEXP !~ x.to_s}
+        def_dataset_method(*meths) unless meths.empty?
       end
 
       # Create a column accessor for a column with a method name that is hard to use in ruby code.
@@ -701,7 +739,7 @@ module Sequel
     #   a model object, Sequel will call +around_destory+, which will call +before_destroy+, do
     #   the destroy, and then call +after_destroy+.
     # * The following instance_methods all call the class method of the same
-    #   name: columns, dataset, db, primary_key, db_schema.
+    #   name: columns, db, primary_key, db_schema.
     # * All of the methods in +BOOLEAN_SETTINGS+ create attr_writers allowing you
     #   to set values for the attribute.  It also creates instnace getters returning
     #   the value of the setting.  If the value has not yet been set, it
@@ -777,7 +815,7 @@ module Sequel
   
       # Sets the value for the given column.  If typecasting is enabled for
       # this object, typecast the value based on the column's type.
-      # If this a a new record or the typecasted value isn't the same
+      # If this is a new record or the typecasted value isn't the same
       # as the current value for the column, mark the column as changed.
       #
       #   a = Artist.new
@@ -885,14 +923,25 @@ module Sequel
 
       # Returns true when current instance exists, false otherwise.
       # Generally an object that isn't new will exist unless it has
-      # been deleted.
+      # been deleted.  Uses a database query to check for existence,
+      # unless the model object is new, in which case this is always
+      # false.
       #
       #   Artist[1].exists? # SELECT 1 FROM artists WHERE (id = 1)
       #   # => true
+      #   Artist.new.exists?
+      #   # => false
       def exists?
-        !this.get(1).nil?
+        new? ? false : !this.get(1).nil?
       end
       
+      # Ignore the model's setter method cache when this instances extends a module, as the
+      # module may contain setter methods.
+      def extend(mod)
+        @singleton_setter_added = true
+        super
+      end
+  
       # Value that should be unique for objects with the same class and pk (if pk is not nil), or
       # the same class and values (if pk is nil).
       #
@@ -901,7 +950,14 @@ module Sequel
       #   Artist.new.hash == Artist.new.hash # true
       #   Artist.new(:name=>'Bob').hash == Artist.new.hash # false
       def hash
-        [model, pk.nil? ? @values.sort_by{|k,v| k.to_s} : pk].hash
+        case primary_key
+        when Array
+          [model, !pk.all? ? @values.sort_by{|k,v| k.to_s} : pk].hash
+        when Symbol
+          [model, pk.nil? ? @values.sort_by{|k,v| k.to_s} : pk].hash
+        else
+          [model, @values.sort_by{|k,v| k.to_s}].hash
+        end
       end
   
       # Returns value for the :id attribute, even if the primary key is
@@ -982,7 +1038,7 @@ module Sequel
       end
       
       # Returns the primary key value identifying the model instance.
-      # Raises an error if this model does not have a primary key.
+      # Raises an +Error+ if this model does not have a primary key.
       # If the model has a composite primary key, returns an array of values.
       #
       #   Artist[1].pk # => 1
@@ -1032,16 +1088,16 @@ module Sequel
       # If it succeeds, it returns self.
       #
       # You can provide an optional list of columns to update, in which
-      # case it only updates those columns.
+      # case it only updates those columns, or a options hash.
       #
       # Takes the following options:
       #
-      # * :changed - save all changed columns, instead of all columns or the columns given
-      # * :transaction - set to true or false to override the current
-      #   use_transactions setting
-      # * :validate - set to false to skip validation
-      # * :raise_on_failure - set to true or false to override the current
-      #   raise_on_save_failure setting
+      # :changed :: save all changed columns, instead of all columns or the columns given
+      # :transaction :: set to true or false to override the current
+      #                 +use_transactions+ setting
+      # :validate :: set to false to skip validation
+      # :raise_on_failure :: set to true or false to override the current
+      #                      +raise_on_save_failure+ setting
       def save(*columns)
         opts = columns.last.is_a?(Hash) ? columns.pop : {}
         if opts[:validate] != false
@@ -1088,7 +1144,8 @@ module Sequel
       end
   
       # Set all values using the entries in the hash, except for the keys
-      # given in except.
+      # given in except.  You should probably use +set_fields+ or +set_only+
+      # instead of this method, as blacklist approaches to security are a bad idea.
       #
       #   artist.set_except({:name=>'Jim'}, :hometown)
       #   artist.name # => 'Jim'
@@ -1111,12 +1168,13 @@ module Sequel
       end
   
       # Set the values using the entries in the hash, only if the key
-      # is included in only.
+      # is included in only.  It may be a better idea to use +set_fields+
+      # instead of this method.
       #
       #   artist.set_only({:name=>'Jim'}, :name)
       #   artist.name # => 'Jim'
       #
-      #   artist.set_only({:hometown=>'LA'}, :name) # Raise error
+      #   artist.set_only({:hometown=>'LA'}, :name) # Raise Error
       def set_only(hash, *only)
         set_restricted(hash, only.flatten, false)
       end
@@ -1135,7 +1193,7 @@ module Sequel
         @this ||= model.dataset.filter(pk_hash).limit(1).naked
       end
       
-      # Runs set with the passed hash and then runs save_changes.
+      # Runs #set with the passed hash and then runs save_changes.
       #
       #   artist.update(:name=>'Jim') # UPDATE artists SET name = 'Jim' WHERE (id = 1)
       def update(hash)
@@ -1143,7 +1201,7 @@ module Sequel
       end
   
       # Update all values using the entries in the hash, ignoring any setting of
-      # allowed_columns or restricted columns in the model.
+      # +allowed_columns+ or +restricted_columns+ in the model.
       #
       #   Artist.set_restricted_columns(:name)
       #   artist.update_all(:name=>'Jim') # UPDATE artists SET name = 'Jim' WHERE (id = 1)
@@ -1152,7 +1210,8 @@ module Sequel
       end
   
       # Update all values using the entries in the hash, except for the keys
-      # given in except.
+      # given in except.  You should probably use +update_fields+ or +update_only+
+      # instead of this method, as blacklist approaches to security are a bad idea.
       #
       #   artist.update_except({:name=>'Jim'}, :hometown) # UPDATE artists SET name = 'Jim' WHERE (id = 1)
       def update_except(hash, *except)
@@ -1173,7 +1232,8 @@ module Sequel
       end
 
       # Update the values using the entries in the hash, only if the key
-      # is included in only.
+      # is included in only.  It may be a better idea to use +update_fields+
+      # instead of this method.
       #
       #   artist.update_only({:name=>'Jim'}, :name)
       #   # UPDATE artists SET name = 'Jim' WHERE (id = 1)
@@ -1488,7 +1548,16 @@ module Sequel
           if meths.include?(m)
             send(m, v)
           elsif strict
-            raise Error, "method #{m} doesn't exist or access is restricted to it"
+            # Avoid using respond_to? or creating symbols from user input
+            if public_methods.map{|s| s.to_s}.include?(m)
+              if Array(model.primary_key).map{|s| s.to_s}.member?(k.to_s) && model.restrict_primary_key?
+                raise Error, "#{k} is a restricted primary key"
+              else
+                raise Error, "#{k} is a restricted column"
+              end
+            else
+              raise Error, "method #{m} doesn't exist"
+            end
           end
         end
         self

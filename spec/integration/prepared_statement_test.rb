@@ -2,19 +2,20 @@ require File.join(File.dirname(File.expand_path(__FILE__)), 'spec_helper.rb')
 
 describe "Prepared Statements and Bound Arguments" do
   before do
-    INTEGRATION_DB.create_table!(:items) do
+    @db = INTEGRATION_DB
+    @db.create_table!(:items) do
       primary_key :id
       integer :number
     end
     @c = Class.new(Sequel::Model(:items))
-    @ds = INTEGRATION_DB[:items]
+    @ds = @db[:items]
     @ds.insert(:number=>10)
     @ds.meta_def(:ba) do |sym|
       prepared_arg_placeholder == '$' ? :"#{sym}__int" : sym
     end
   end
   after do
-    INTEGRATION_DB.drop_table(:items)
+    @db.drop_table(:items)
   end
   
   specify "should support bound variables with select, all, and first" do
@@ -79,7 +80,7 @@ describe "Prepared Statements and Bound Arguments" do
     @ds.filter(:id=>:$i).filter(:number=>@ds.select(:number).filter(:number=>@ds.select(:number).filter(:number=>@ds.ba(:$n)))).filter(:id=>:$j).call(:select, :n=>10, :i=>1, :j=>1).should == [{:id=>1, :number=>10}]
   end
   
-  specify "should support using a bound variable for a limit and offset" do
+  cspecify "should support using a bound variable for a limit and offset", [:jdbc, :db2] do
     @ds.insert(:number=>20)
     ds = @ds.limit(@ds.ba(:$n), @ds.ba(:$n2)).order(:id)
     ds.call(:select, :n=>1, :n2=>0).should == [{:id=>1, :number=>10}]
@@ -124,11 +125,6 @@ describe "Prepared Statements and Bound Arguments" do
     INTEGRATION_DB.call(:select_n, :n=>10).should == [{:id=>1, :number=>10}]
     @ds.filter(:number=>@ds.ba(:$n)).prepare(:first, :select_n)
     INTEGRATION_DB.call(:select_n, :n=>10).should == {:id=>1, :number=>10}
-    if INTEGRATION_DB.adapter_scheme == :jdbc and INTEGRATION_DB.database_type == :sqlite
-      # Work around for open prepared statements on a table not allowing the
-      # dropping of a table when using SQLite over JDBC
-      INTEGRATION_DB.synchronize{|c| c.prepared_statements[:select_n][1].close}
-    end
   end
 
   specify "should support placeholder literal strings with prepare" do
@@ -162,7 +158,7 @@ describe "Prepared Statements and Bound Arguments" do
     @ds.filter(:id=>:$i).filter(:number=>@ds.select(:number).filter(:number=>@ds.select(:number).filter(:number=>@ds.ba(:$n)))).filter(:id=>:$j).prepare(:select, :seq_select).call(:n=>10, :i=>1, :j=>1).should == [{:id=>1, :number=>10}]
   end
   
-  specify "should support using a prepared_statement for a limit and offset" do
+  cspecify "should support using a prepared_statement for a limit and offset", :db2 do
     @ds.insert(:number=>20)
     ps = @ds.limit(@ds.ba(:$n), @ds.ba(:$n2)).order(:id).prepare(:select, :seq_select)
     ps.call(:n=>1, :n2=>0).should == [{:id=>1, :number=>10}]
@@ -218,17 +214,13 @@ describe "Prepared Statements and Bound Arguments" do
     INTEGRATION_DB.call(:select_n, :n=>10).should == [@c.load(:id=>1, :number=>10)]
     @c.filter(:number=>@ds.ba(:$n)).prepare(:first, :select_n)
     INTEGRATION_DB.call(:select_n, :n=>10).should == @c.load(:id=>1, :number=>10)
-    if INTEGRATION_DB.adapter_scheme == :jdbc and INTEGRATION_DB.database_type == :sqlite
-      # Work around for open prepared statements on a table not allowing the
-      # dropping of a table when using SQLite over JDBC
-      INTEGRATION_DB.synchronize{|c| c.prepared_statements[:select_n][1].close}
-    end
   end
 end
 
 describe "Bound Argument Types" do
   before do
-    INTEGRATION_DB.create_table!(:items) do
+    @db = INTEGRATION_DB
+    @db.create_table!(:items) do
       primary_key :id
       Date :d
       DateTime :dt
@@ -238,7 +230,7 @@ describe "Bound Argument Types" do
       Float :f
       TrueClass :b
     end
-    @ds = INTEGRATION_DB[:items]
+    @ds = @db[:items]
     @vs = {:d=>Date.civil(2010, 10, 11), :dt=>DateTime.civil(2010, 10, 12, 13, 14, 15), :f=>1.0, :s=>'str', :t=>Time.at(20101010), :file=>Sequel::SQL::Blob.new('blob'), :b=>true}
     @ds.insert(@vs)
     @ds.meta_def(:ba) do |sym, type|
@@ -247,10 +239,7 @@ describe "Bound Argument Types" do
   end
   after do
     Sequel.datetime_class = Time
-    if INTEGRATION_DB.adapter_scheme == :jdbc && INTEGRATION_DB.database_type == :sqlite
-      INTEGRATION_DB.synchronize{|c| c.prepared_statements.each{|k, ps| ps[1].close}.clear}
-    end
-    INTEGRATION_DB.drop_table(:items)
+    @db.drop_table(:items)
   end
 
   cspecify "should handle date type", [:do, :sqlite], :mssql, [:jdbc, :sqlite] do 
@@ -266,7 +255,7 @@ describe "Bound Argument Types" do
     @ds.filter(:t=>@ds.ba(:$x, :timestamp)).prepare(:first, :ps_time).call(:x=>@vs[:t])[:t].should == @vs[:t]
   end
 
-  cspecify "should handle blob type", [:swift], [:odbc] do
+  cspecify "should handle blob type", [:swift], [:odbc], [:jdbc, :db2] do
     @ds.filter(:file=>@ds.ba(:$x, :bytea)).prepare(:first, :ps_blob).call(:x=>@vs[:file])[:file].should == @vs[:file]
   end
 
@@ -278,7 +267,7 @@ describe "Bound Argument Types" do
     @ds.filter(:s=>@ds.ba(:$x, :text)).prepare(:first, :ps_string).call(:x=>@vs[:s])[:s].should == @vs[:s]
   end
 
-  cspecify "should handle boolean type", [:do, :sqlite], [:odbc, :mssql], [:jdbc, :sqlite]  do
+  cspecify "should handle boolean type", [:do, :sqlite], [:odbc, :mssql], [:jdbc, :sqlite], [:jdbc, :db2]  do
     @ds.filter(:b=>@ds.ba(:$x, :boolean)).prepare(:first, :ps_string).call(:x=>@vs[:b])[:b].should == @vs[:b]
   end
 end unless INTEGRATION_DB.adapter_scheme == :swift && INTEGRATION_DB.database_type == :postgres

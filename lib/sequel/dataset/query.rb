@@ -1,7 +1,7 @@
 module Sequel
   class Dataset
     # ---------------------
-    # :section: Methods that return modified datasets
+    # :section: 1 - Methods that return modified datasets
     # These methods all return modified copies of the receiver.
     # ---------------------
 
@@ -80,7 +80,7 @@ module Sequel
     # :from_self :: Set to false to not wrap the returned dataset in a from_self, use with care.
     #
     #   DB[:items].except(DB[:other_items])
-    #   # SELECT * FROM items EXCEPT SELECT * FROM other_items
+    #   # SELECT * FROM (SELECT * FROM items EXCEPT SELECT * FROM other_items) AS t1
     #
     #   DB[:items].except(DB[:other_items], :all=>true, :from_self=>false)
     #   # SELECT * FROM items EXCEPT ALL SELECT * FROM other_items
@@ -381,7 +381,11 @@ module Sequel
       inner_join(*args, &block)
     end
 
-    # Returns a joined dataset.  Uses the following arguments:
+    # Returns a joined dataset.  Not usually called directly, users should use the
+    # appropriate join method (e.g. join, left_join, natural_join, cross_join) which fills
+    # in the +type+ argument.
+    #
+    # Takes the following arguments:
     #
     # * type - The type of join to do (e.g. :inner)
     # * table - Depends on type:
@@ -411,7 +415,29 @@ module Sequel
     #   in which case it yields the table alias/name for the table currently being joined,
     #   the table alias/name for the last joined (or first table), and an array of previous
     #   SQL::JoinClause. Unlike +filter+, this block is not treated as a virtual row block.
+    #
+    # Examples:
+    #
+    #   DB[:a].join_table(:cross, :b)
+    #   # SELECT * FROM a CROSS JOIN b
+    #
+    #   DB[:a].join_table(:inner, DB[:b], :c=>d)
+    #   # SELECT * FROM a INNER JOIN (SELECT * FROM b) AS t1 ON (t1.c = a.d)
+    #
+    #   DB[:a].join_table(:left, :b___c, [:d])
+    #   # SELECT * FROM a LEFT JOIN b AS c USING (d)
+    #
+    #   DB[:a].natural_join(:b).join_table(:inner, :c) do |ta, jta, js|
+    #     (:d.qualify(ta) > :e.qualify(jta)) & {:f.qualify(ta)=>DB.from(js.first.table).select(:g)}
+    #   end
+    #   # SELECT * FROM a NATURAL JOIN b INNER JOIN c
+    #   #   ON ((c.d > b.e) AND (c.f IN (SELECT g FROM b)))
     def join_table(type, table, expr=nil, options={}, &block)
+      if table.is_a?(Dataset) && table.opts[:with] && !supports_cte_in_subqueries?
+        s, ds = hoist_cte(table)
+        return s.join_table(type, ds, expr, options, &block)
+      end
+
       using_join = expr.is_a?(Array) && !expr.empty? && expr.all?{|x| x.is_a?(Symbol)}
       if using_join && !supports_join_using?
         h = {}
@@ -591,7 +617,7 @@ module Sequel
       @opts[:order] ? ds.order_more(*@opts[:order]) : ds
     end
     
-    # Qualify to the given table, or first source if not table is given.
+    # Qualify to the given table, or first source if no table is given.
     #
     #   DB[:items].filter(:id=>1).qualify
     #   # SELECT items.* FROM items WHERE (items.id = 1)
@@ -674,7 +700,7 @@ module Sequel
       if tables.empty?
         clone(:select => nil)
       else
-        select(*tables.map{|t| SQL::ColumnAll.new(t)})
+        select(*tables.map{|t| i, a = split_alias(t); a || i}.map{|t| SQL::ColumnAll.new(t)})
       end
     end
     
@@ -718,7 +744,7 @@ module Sequel
     end
     
     # Set the server for this dataset to use.  Used to pick a specific database
-    # shard to run a query against, or to override the default (which is SELECT uses
+    # shard to run a query against, or to override the default (where SELECT uses
     # :read_only database and all other queries use the :default database).  This
     # method is always available but is only useful when database sharding is being
     # used.
@@ -790,8 +816,8 @@ module Sequel
     # :all :: Set to true to use UNION ALL instead of UNION, so duplicate rows can occur
     # :from_self :: Set to false to not wrap the returned dataset in a from_self, use with care.
     #
-    #   DB[:items].union(DB[:other_items]).sql
-    #   #=> "SELECT * FROM items UNION SELECT * FROM other_items"
+    #   DB[:items].union(DB[:other_items])
+    #   # SELECT * FROM (SELECT * FROM items UNION SELECT * FROM other_items) AS t1
     #
     #   DB[:items].union(DB[:other_items], :all=>true, :from_self=>false)
     #   # SELECT * FROM items UNION ALL SELECT * FROM other_items
@@ -905,12 +931,6 @@ module Sequel
       _filter_or_exclude(false, clause, *cond, &block)
     end
 
-    # Treat the +block+ as a virtual_row block if not +nil+ and
-    # add the resulting columns to the +columns+ array (modifies +columns+).
-    def virtual_row_columns(columns, block)
-      columns.concat(Array(Sequel.virtual_row(&block))) if block
-    end
-    
     # Add the dataset to the list of compounds
     def compound_clone(type, dataset, opts)
       ds = compound_from_self.clone(:compounds=>Array(@opts[:compounds]).map{|x| x.dup} + [[type, dataset.compound_from_self, opts[:all]]])
@@ -943,7 +963,13 @@ module Sequel
       when Symbol, SQL::Expression
         expr
       when TrueClass, FalseClass
-        SQL::BooleanExpression.new(:NOOP, expr)
+        if supports_where_true?
+          SQL::BooleanExpression.new(:NOOP, expr)
+        elsif expr
+          SQL::Constants::SQLTRUE
+        else
+          SQL::Constants::SQLFALSE
+        end
       when String
         LiteralString.new("(#{expr})")
       else
@@ -951,6 +977,13 @@ module Sequel
       end
     end
     
+    # Return two datasets, the first a clone of the receiver with the WITH
+    # clause from the given dataset added to it, and the second a clone of
+    # the given dataset with the WITH clause removed.
+    def hoist_cte(ds)
+      [clone(:with => (opts[:with] || []) + ds.opts[:with]), ds.clone(:with => nil)]
+    end
+
     # Inverts the given order by breaking it into a list of column references
     # and inverting them.
     #
@@ -967,6 +1000,12 @@ module Sequel
           SQL::OrderedExpression.new(f)
         end
       end
+    end
+
+    # Treat the +block+ as a virtual_row block if not +nil+ and
+    # add the resulting columns to the +columns+ array (modifies +columns+).
+    def virtual_row_columns(columns, block)
+      columns.concat(Array(Sequel.virtual_row(&block))) if block
     end
   end
 end

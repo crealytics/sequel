@@ -5,32 +5,27 @@ rescue LoadError
 end
 raise(LoadError, "require 'mysql' did not define Mysql::CLIENT_MULTI_RESULTS!\n  You are probably using the pure ruby mysql.rb driver,\n  which Sequel does not support. You need to install\n  the C based adapter, and make sure that the mysql.so\n  file is loaded instead of the mysql.rb file.\n") unless defined?(Mysql::CLIENT_MULTI_RESULTS)
 
-Sequel.require %w'shared/mysql utils/stored_procedures', 'adapters'
+Sequel.require %w'shared/mysql_prepared_statements', 'adapters'
 
 module Sequel
   # Module for holding all MySQL-related classes and modules for Sequel.
   module MySQL
     TYPE_TRANSLATOR = tt = Class.new do
       def boolean(s) s.to_i != 0 end
-      def blob(s) ::Sequel::SQL::Blob.new(s) end
       def integer(s) s.to_i end
       def float(s) s.to_f end
-      def decimal(s) ::BigDecimal.new(s) end
-      def date(s) ::Sequel.string_to_date(s) end
-      def time(s) ::Sequel.string_to_time(s) end
-      def timestamp(s) ::Sequel.database_to_application_timestamp(s) end
-      def date_conv(s) ::Sequel::MySQL.convert_date_time(:string_to_date, s) end
-      def time_conv(s) ::Sequel::MySQL.convert_date_time(:string_to_time, s) end
-      def timestamp_conv(s) ::Sequel::MySQL.convert_date_time(:database_to_application_timestamp, s) end
+      def date(s) ::Sequel::MySQL.convert_date_time(:string_to_date, s) end
+      def time(s) ::Sequel::MySQL.convert_date_time(:string_to_time, s) end
+      def timestamp(s) ::Sequel::MySQL.convert_date_time(:database_to_application_timestamp, s) end
     end.new
 
     # Hash with integer keys and callable values for converting MySQL types.
     MYSQL_TYPES = {}
     {
-      [0, 246]  => tt.method(:decimal),
-      [2, 3, 8, 9, 13, 247, 248]  => tt.method(:integer),
-      [4, 5]  => tt.method(:float),
-      [249, 250, 251, 252]  => tt.method(:blob)
+      [0, 246] => ::BigDecimal.method(:new),
+      [2, 3, 8, 9, 13, 247, 248] => tt.method(:integer),
+      [4, 5] => tt.method(:float),
+      [249, 250, 251, 252] => ::Sequel::SQL::Blob.method(:new)
     }.each do |k,v|
       k.each{|n| MYSQL_TYPES[n] = v}
     end
@@ -54,10 +49,10 @@ module Sequel
     # Modify the type translators for the date, time, and timestamp types
     # depending on the value given.
     def self.convert_invalid_date_time=(v)
-      MYSQL_TYPES[11] = TYPE_TRANSLATOR.method(v == false ? :time : :time_conv)
-      m = TYPE_TRANSLATOR.method(v == false ? :date : :date_conv)
+      MYSQL_TYPES[11] = (v != false) ?  TYPE_TRANSLATOR.method(:time) : ::Sequel.method(:string_to_time)
+      m = (v != false) ? TYPE_TRANSLATOR.method(:date) : ::Sequel.method(:string_to_date)
       [10, 14].each{|i| MYSQL_TYPES[i] = m}
-      m = TYPE_TRANSLATOR.method(v == false ? :timestamp : :timestamp_conv)
+      m = (v != false) ? TYPE_TRANSLATOR.method(:timestamp) : ::Sequel.method(:database_to_application_timestamp)
       [7, 12].each{|i| MYSQL_TYPES[i] = m}
       @convert_invalid_date_time = v
     end
@@ -84,17 +79,12 @@ module Sequel
     # Database class for MySQL databases used with Sequel.
     class Database < Sequel::Database
       include Sequel::MySQL::DatabaseMethods
+      include Sequel::MySQL::PreparedStatements::DatabaseMethods
       
       # Mysql::Error messages that indicate the current connection should be disconnected
       MYSQL_DATABASE_DISCONNECT_ERRORS = /\A(Commands out of sync; you can't run this command now|Can't connect to local MySQL server through socket|MySQL server has gone away|Lost connection to MySQL server during query)/
       
       set_adapter_scheme :mysql
-      
-      # Support stored procedures on MySQL
-      def call_sproc(name, opts={}, &block)
-        args = opts[:args] || [] 
-        execute("CALL #{name}#{args.empty? ? '()' : literal(args)}", opts.merge(:sproc=>false), &block)
-      end
       
       # Connect to the database.  In addition to the usual database options,
       # the following options have effect:
@@ -139,7 +129,7 @@ module Sequel
           opts[:user],
           opts[:password],
           opts[:database],
-          opts[:port],
+          (opts[:port].to_i if opts[:port]),
           opts[:socket],
           Mysql::CLIENT_MULTI_RESULTS +
           Mysql::CLIENT_MULTI_STATEMENTS +
@@ -161,28 +151,13 @@ module Sequel
 
         sqls.each{|sql| log_yield(sql){conn.query(sql)}}
 
-        class << conn
-          attr_accessor :prepared_statements
-        end
-        conn.prepared_statements = {}
+        add_prepared_statements_cache(conn)
         conn
       end
       
       # Returns instance of Sequel::MySQL::Dataset with the given options.
       def dataset(opts = nil)
         MySQL::Dataset.new(self, opts)
-      end
-      
-      # Executes the given SQL using an available connection, yielding the
-      # connection if the block is given.
-      def execute(sql, opts={}, &block)
-        if opts[:sproc]
-          call_sproc(sql, opts, &block)
-        elsif sql.is_a?(Symbol)
-          execute_prepared_statement(sql, opts, &block)
-        else
-          synchronize(opts[:server]){|conn| _execute(conn, sql, opts, &block)}
-        end
       end
       
       # Return the version of the MySQL server two which we are connecting.
@@ -220,7 +195,7 @@ module Sequel
             end
           end
         rescue Mysql::Error => e
-          raise_error(e, :disconnect=>MYSQL_DATABASE_DISCONNECT_ERRORS.match(e.message))
+          raise_error(e)
         ensure
           r.free if r
           # Use up all results to avoid a commands out of sync message.
@@ -248,6 +223,12 @@ module Sequel
       def database_error_classes
         [Mysql::Error]
       end
+
+      # Raise a disconnect error if the exception message matches the list
+      # of recognized exceptions.
+      def disconnect_error?(e, opts)
+        super || (e.is_a?(::Mysql::Error) && MYSQL_DATABASE_DISCONNECT_ERRORS.match(e.message))
+      end
       
       # The database name when using the native adapter is always stored in
       # the :database option.
@@ -262,27 +243,6 @@ module Sequel
         nil
       end
       
-      # Executes a prepared statement on an available connection.  If the
-      # prepared statement already exists for the connection and has the same
-      # SQL, reuse it, otherwise, prepare the new statement.  Because of the
-      # usual MySQL stupidity, we are forced to name arguments via separate
-      # SET queries.  Use @sequel_arg_N (for N starting at 1) for these
-      # arguments.
-      def execute_prepared_statement(ps_name, opts, &block)
-        args = opts[:arguments]
-        ps = prepared_statements[ps_name]
-        sql = ps.prepared_sql
-        synchronize(opts[:server]) do |conn|
-          unless conn.prepared_statements[ps_name] == sql
-            conn.prepared_statements[ps_name] = sql
-            _execute(conn, "PREPARE #{ps_name} FROM '#{::Mysql.quote(sql)}'", opts)
-          end
-          i = 0
-          _execute(conn, "SET " + args.map {|arg| "@sequel_arg_#{i+=1} = #{literal(arg)}"}.join(", "), opts) unless args.empty?
-          _execute(conn, "EXECUTE #{ps_name}#{" USING #{(1..i).map{|j| "@sequel_arg_#{j}"}.join(', ')}" unless i == 0}", opts, &block)
-        end
-      end
-      
       # Convert tinyint(1) type to boolean if convert_tinyint_to_bool is true
       def schema_column_type(db_type)
         Sequel::MySQL.convert_tinyint_to_bool && db_type == 'tinyint(1)' ? :boolean : super
@@ -292,67 +252,7 @@ module Sequel
     # Dataset class for MySQL datasets accessed via the native driver.
     class Dataset < Sequel::Dataset
       include Sequel::MySQL::DatasetMethods
-      include StoredProcedures
-      
-      # Methods to add to MySQL prepared statement calls without using a
-      # real database prepared statement and bound variables.
-      module CallableStatementMethods
-        # Extend given dataset with this module so subselects inside subselects in
-        # prepared statements work.
-        def subselect_sql(ds)
-          ps = ds.to_prepared_statement(:select)
-          ps.extend(CallableStatementMethods)
-          ps = ps.bind(@opts[:bind_vars]) if @opts[:bind_vars]
-          ps.prepared_args = prepared_args
-          ps.prepared_sql
-        end
-      end
-      
-      # Methods for MySQL prepared statements using the native driver.
-      module PreparedStatementMethods
-        include Sequel::Dataset::UnnumberedArgumentMapper
-        
-        private
-        
-        # Execute the prepared statement with the bind arguments instead of
-        # the given SQL.
-        def execute(sql, opts={}, &block)
-          super(prepared_statement_name, {:arguments=>bind_arguments}.merge(opts), &block)
-        end
-        
-        # Same as execute, explicit due to intricacies of alias and super.
-        def execute_dui(sql, opts={}, &block)
-          super(prepared_statement_name, {:arguments=>bind_arguments}.merge(opts), &block)
-        end
-      end
-      
-      # Methods for MySQL stored procedures using the native driver.
-      module StoredProcedureMethods
-        include Sequel::Dataset::StoredProcedureMethods
-        
-        private
-        
-        # Execute the database stored procedure with the stored arguments.
-        def execute(sql, opts={}, &block)
-          super(@sproc_name, {:args=>@sproc_args, :sproc=>true}.merge(opts), &block)
-        end
-        
-        # Same as execute, explicit due to intricacies of alias and super.
-        def execute_dui(sql, opts={}, &block)
-          super(@sproc_name, {:args=>@sproc_args, :sproc=>true}.merge(opts), &block)
-        end
-      end
-      
-      # MySQL is different in that it supports prepared statements but not bound
-      # variables outside of prepared statements.  The default implementation
-      # breaks the use of subselects in prepared statements, so extend the
-      # temporary prepared statement that this creates with a module that
-      # fixes it.
-      def call(type, bind_arguments={}, *values, &block)
-        ps = to_prepared_statement(type, values)
-        ps.extend(CallableStatementMethods)
-        ps.call(bind_arguments, &block)
-      end
+      include Sequel::MySQL::PreparedStatements::DatasetMethods
       
       # Delete rows matching this dataset
       def delete
@@ -393,18 +293,6 @@ module Sequel
       # Insert a new value into this dataset
       def insert(*values)
         execute_dui(insert_sql(*values)){|c| return c.insert_id}
-      end
-      
-      # Store the given type of prepared statement in the associated database
-      # with the given name.
-      def prepare(type, name=nil, *values)
-        ps = to_prepared_statement(type, values)
-        ps.extend(PreparedStatementMethods)
-        if name
-          ps.prepared_statement_name = name
-          db.prepared_statements[name] = ps
-        end
-        ps
       end
       
       # Replace (update or insert) the matching row.
@@ -448,11 +336,6 @@ module Sequel
       # Handle correct quoting of strings using ::MySQL.quote.
       def literal_string(v)
         "'#{::Mysql.quote(v)}'"
-      end
-      
-      # Extend the dataset with the MySQL stored procedure methods.
-      def prepare_extend_sproc(ds)
-        ds.extend(StoredProcedureMethods)
       end
       
       # Yield each row of the given result set r with columns cols

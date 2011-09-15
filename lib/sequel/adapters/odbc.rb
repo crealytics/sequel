@@ -19,6 +19,9 @@ module Sequel
         when 'progress'
           Sequel.ts_require 'adapters/shared/progress'
           extend Sequel::Progress::DatabaseMethods
+        when 'db2'
+          Sequel.ts_require 'adapters/odbc/db2'
+          extend Sequel::ODBC::DB2::DatabaseMethods
         end
       end
 
@@ -52,7 +55,7 @@ module Sequel
             r = log_yield(sql){conn.run(sql)}
             yield(r) if block_given?
           rescue ::ODBC::Error, ArgumentError => e
-            raise_error(e, :disconnect=>DISCONNECT_ERRORS.match(e.message))
+            raise_error(e)
           ensure
             r.drop if r
           end
@@ -65,7 +68,7 @@ module Sequel
           begin
             log_yield(sql){conn.do(sql)}
           rescue ::ODBC::Error, ArgumentError => e
-            raise_error(e, :disconnect=>DISCONNECT_ERRORS.match(e.message))
+            raise_error(e)
           end
         end
       end
@@ -77,8 +80,16 @@ module Sequel
         :do
       end
 
+      def database_error_classes
+        [::ODBC::Error]
+      end
+
       def disconnect_connection(c)
         c.disconnect
+      end
+
+      def disconnect_error?(e, opts)
+        super || (e.is_a?(::ODBC::Error) && DISCONNECT_ERRORS.match(e.message))
       end
     end
     
@@ -118,7 +129,7 @@ module Sequel
           Sequel.database_to_application_timestamp([v.year, v.month, v.day, v.hour, v.minute, v.second])
         when ::ODBC::Time
           now = ::Time.now
-          Sequel.database_to_application_timestamp([now.year, now.month, now.day, v.hour, v.minute, v.second])
+          Sequel::SQLTime.local(now.year, now.month, now.day, v.hour, v.minute, v.second)
         when ::ODBC::Date
           Date.new(v.year, v.month, v.day)
         else

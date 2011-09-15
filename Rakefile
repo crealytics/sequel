@@ -1,11 +1,5 @@
 require "rake"
 require "rake/clean"
-require "rake/gempackagetask"
-begin
-  require "hanna/rdoctask"
-rescue LoadError
-  require "rake/rdoctask"
-end
 
 NAME = 'sequel'
 VERS = lambda do
@@ -13,8 +7,6 @@ VERS = lambda do
   Sequel.version
 end
 CLEAN.include ["**/.*.sw?", "sequel-*.gem", ".config", "rdoc", "coverage", "www/public/*.html", "www/public/rdoc*", '**/*.rbc']
-RDOC_DEFAULT_OPTS = ["--quiet", "--line-numbers", "--inline-source", '--title', 'Sequel: The Database Toolkit for Ruby']
-RDOC_OPTS = RDOC_DEFAULT_OPTS + ['--main', 'README.rdoc']
 
 # Gem Packaging and Release
 
@@ -40,7 +32,20 @@ end
 
 ### RDoc
 
-Rake::RDocTask.new do |rdoc|
+RDOC_DEFAULT_OPTS = ["--quiet", "--line-numbers", "--inline-source", '--title', 'Sequel: The Database Toolkit for Ruby']
+
+rdoc_task_class = begin
+  require "rdoc/task"
+  RDOC_DEFAULT_OPTS.concat(['-f', 'hanna'])
+  RDoc::Task
+rescue LoadError
+  require "rake/rdoctask"
+  Rake::RDocTask
+end
+
+RDOC_OPTS = RDOC_DEFAULT_OPTS + ['--main', 'README.rdoc']
+
+rdoc_task_class.new do |rdoc|
   rdoc.rdoc_dir = "rdoc"
   rdoc.options += RDOC_OPTS
   rdoc.rdoc_files.add %w"README.rdoc CHANGELOG MIT-LICENSE lib/**/*.rb doc/*.rdoc doc/release_notes/*.txt"
@@ -50,25 +55,25 @@ end
 
 desc "Make local version of website"
 task :website do
-  sh %{www/make_www.rb}
+  sh %{#{RUBY} www/make_www.rb}
 end
 
 desc "Make rdoc for website"
 task :website_rdoc=>[:website_rdoc_main, :website_rdoc_adapters, :website_rdoc_plugins]
 
-Rake::RDocTask.new(:website_rdoc_main) do |rdoc|
+rdoc_task_class.new(:website_rdoc_main) do |rdoc|
   rdoc.rdoc_dir = "www/public/rdoc"
   rdoc.options += RDOC_OPTS
   rdoc.rdoc_files.add %w"README.rdoc CHANGELOG MIT-LICENSE lib/*.rb lib/sequel/*.rb lib/sequel/{connection_pool,dataset,database,model}/*.rb doc/*.rdoc doc/release_notes/*.txt lib/sequel/extensions/migration.rb"
 end
 
-Rake::RDocTask.new(:website_rdoc_adapters) do |rdoc|
+rdoc_task_class.new(:website_rdoc_adapters) do |rdoc|
   rdoc.rdoc_dir = "www/public/rdoc-adapters"
   rdoc.options += RDOC_DEFAULT_OPTS + %w'--main Sequel'
   rdoc.rdoc_files.add %w"lib/sequel/adapters/**/*.rb"
 end
 
-Rake::RDocTask.new(:website_rdoc_plugins) do |rdoc|
+rdoc_task_class.new(:website_rdoc_plugins) do |rdoc|
   rdoc.rdoc_dir = "www/public/rdoc-plugins"
   rdoc.options += RDOC_DEFAULT_OPTS + %w'--main Sequel'
   rdoc.rdoc_files.add %w"lib/sequel/{extensions,plugins}/**/*.rb"
@@ -123,7 +128,7 @@ begin
   spec_with_cov.call("spec_plugin", Dir["spec/extensions/*_spec.rb"], "Run extension/plugin specs")
   spec_with_cov.call("spec_integration", Dir["spec/integration/*_test.rb"], "Run integration tests")
   
-  %w'postgres sqlite mysql informix oracle firebird mssql'.each do |adapter|
+  %w'postgres sqlite mysql informix oracle firebird mssql db2'.each do |adapter|
     spec_with_cov.call("spec_#{adapter}", ["spec/adapters/#{adapter}_spec.rb"] + Dir["spec/integration/*_test.rb"], "Run #{adapter} specs")
   end
 rescue LoadError
@@ -154,5 +159,5 @@ end
 
 desc "Check syntax of all .rb files"
 task :check_syntax do
-  Dir['**/*.rb'].each{|file| print `#{ENV['RUBY'] || :ruby} -c #{file} | fgrep -v "Syntax OK"`}
+  Dir['**/*.rb'].each{|file| print `#{RUBY} -c #{file} | fgrep -v "Syntax OK"`}
 end

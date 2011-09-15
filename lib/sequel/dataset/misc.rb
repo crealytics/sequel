@@ -1,7 +1,7 @@
 module Sequel
   class Dataset
     # ---------------------
-    # :section: Miscellaneous methods
+    # :section: 6 - Miscellaneous methods
     # These methods don't fit cleanly into another section.
     # ---------------------
     
@@ -23,17 +23,13 @@ module Sequel
     #   DB[:posts]
     #
     # Sequel::Dataset is an abstract class that is not useful by itself. Each
-    # database adaptor provides a subclass of Sequel::Dataset, and has
+    # database adapter provides a subclass of Sequel::Dataset, and has
     # the Database#dataset method return an instance of that subclass.
     def initialize(db, opts = nil)
       @db = db
-      @quote_identifiers = db.quote_identifiers? if db.respond_to?(:quote_identifiers?)
-      @identifier_input_method = db.identifier_input_method if db.respond_to?(:identifier_input_method)
-      @identifier_output_method = db.identifier_output_method if db.respond_to?(:identifier_output_method)
       @opts = opts || {}
-      @row_proc = nil
     end
-    
+
     # Define a hash value such that datasets with the same DB, opts, and SQL
     # will be consider equal.
     def ==(o)
@@ -87,10 +83,10 @@ module Sequel
     # have a table, raises an error.  If the table is aliased, returns the original
     # table, not the alias
     #
-    #   DB[:table].first_source_alias
+    #   DB[:table].first_source_table
     #   # => :table
     #
-    #   DB[:table___t].first_source_alias
+    #   DB[:table___t].first_source_table
     #   # => :table
     def first_source_table
       source = @opts[:from]
@@ -111,7 +107,31 @@ module Sequel
     # Define a hash value such that datasets with the same DB, opts, and SQL
     # will have the same hash value
     def hash
-      [db, opts.sort_by{|k| k.to_s}, sql].hash
+      [db, opts.sort_by{|k, v| k.to_s}, sql].hash
+    end
+    
+    # The String instance method to call on identifiers before sending them to
+    # the database.
+    def identifier_input_method
+      if defined?(@identifier_input_method)
+        @identifier_input_method
+      elsif db.respond_to?(:identifier_input_method)
+        @identifier_input_method = db.identifier_input_method
+      else
+        @identifier_input_method = nil
+      end
+    end
+    
+    # The String instance method to call on identifiers before sending them to
+    # the database.
+    def identifier_output_method
+      if defined?(@identifier_output_method)
+        @identifier_output_method
+      elsif db.respond_to?(:identifier_output_method)
+        @identifier_output_method = db.identifier_output_method
+      else
+        @identifier_output_method = nil
+      end
     end
     
     # Returns a string representation of the dataset including the class name 
@@ -120,7 +140,7 @@ module Sequel
       "#<#{self.class}: #{sql.inspect}>"
     end
     
-    # Splits a possible implicit alias in C, handling both SQL::AliasedExpressions
+    # Splits a possible implicit alias in +c+, handling both SQL::AliasedExpressions
     # and Symbols.  Returns an array of two elements, with the first being the
     # main expression, and the second being the alias.
     def split_alias(c)
@@ -130,6 +150,8 @@ module Sequel
         [c_table ? SQL::QualifiedIdentifier.new(c_table, column.to_sym) : column.to_sym, aliaz]
       when SQL::AliasedExpression
         [c.expression, c.aliaz]
+      when SQL::JoinClause
+        [c.table, c.table_alias]
       else
         [c, nil]
       end

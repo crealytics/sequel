@@ -13,6 +13,11 @@ describe "Sequel::Plugins::IdentityMap" do
         execute(sql)
         yield h
       end
+      def self.waw_identity_map(&block) # with and without
+        with_identity_map(&block)
+        db.reset
+        yield
+      end
     end
     class ::IdentityMapAlbum < ::IdentityMapModel
       columns :artist_id
@@ -213,6 +218,163 @@ describe "Sequel::Plugins::IdentityMap" do
       MODEL_DB.sqls.length.should == 1
       o = @c1.load(:id=>2, :artist_id=>2)
       o.artist.should == a
+      MODEL_DB.sqls.length.should == 2
+    end
+  end
+
+  it "should not override custom :eager_loaders for many_to_many associations" do
+    @c1.columns :id
+    @c2.columns :id
+    c = @c2
+    @c1.many_to_many :artists, :class=>@c2, :left_key=>:album_id, :right_key=>:artist_id, :join_table=>:aa, :eager_loader=>(proc do |eo|
+       eo[:rows].each{|object| object.associations[:artists] = [c.load(:id=>object.id)]}
+    end)
+    ds = @c1.dataset
+    def ds.fetch_rows(sql)
+      execute(sql)
+      yield({:id=>1})
+      yield({:id=>2})
+      yield({:id=>3})
+    end
+
+    @c.waw_identity_map do
+      MODEL_DB.sqls.length.should == 0
+      a = @c1.eager(:artists).all
+      MODEL_DB.sqls.length.should == 1
+      a.should == [@c1.load(:id=>1), @c1.load(:id=>2), @c1.load(:id=>3)]
+      a.map{|x| x.artists}.should == [[@c2.load(:id=>1)], [@c2.load(:id=>2)], [@c2.load(:id=>3)]]
+      MODEL_DB.sqls.length.should == 1
+    end
+  end
+
+  it "should work correctly when eagerly loading many_to_many associations" do
+    @c1.columns :id
+    @c2.columns :id
+    @c1.many_to_many :artists, :class=>@c2, :left_key=>:album_id, :right_key=>:artist_id, :join_table=>:aa
+    ds = @c1.dataset
+    def ds.fetch_rows(sql)
+      execute(sql)
+      yield({:id=>1})
+      yield({:id=>2})
+      yield({:id=>3})
+    end
+    ds = @c2.dataset
+    def ds.fetch_rows(sql)
+      execute(sql)
+      yield({:id=>1, :x_foreign_key_x=>1})
+      yield({:id=>1, :x_foreign_key_x=>2})
+      yield({:id=>2, :x_foreign_key_x=>1})
+      yield({:id=>2, :x_foreign_key_x=>2})
+      yield({:id=>3, :x_foreign_key_x=>1})
+      yield({:id=>3, :x_foreign_key_x=>1})
+    end
+
+    @c.waw_identity_map do
+      MODEL_DB.sqls.length.should == 0
+      a = @c1.eager(:artists).all
+      MODEL_DB.sqls.length.should == 2
+      a.should == [@c1.load(:id=>1), @c1.load(:id=>2), @c1.load(:id=>3)]
+      a.map{|x| x.artists}.should == [[@c2.load(:id=>1), @c2.load(:id=>2), @c2.load(:id=>3), @c2.load(:id=>3)], [@c2.load(:id=>1), @c2.load(:id=>2)], []]
+      MODEL_DB.sqls.length.should == 2
+    end
+  end
+
+  it "should work correctly when eagerly loading many_to_many associations with composite keys" do
+    @c1.columns :id, :id2
+    @c2.columns :id
+    @c1.set_primary_key :id, :id2
+    @c1.many_to_many :artists, :class=>@c2, :left_key=>[:album_id1, :album_id2], :right_key=>:artist_id, :join_table=>:aa
+    ds = @c1.dataset
+    def ds.fetch_rows(sql)
+      execute(sql)
+      yield({:id=>1, :id2=>4})
+      yield({:id=>2, :id2=>5})
+      yield({:id=>3, :id2=>6})
+    end
+    ds = @c2.dataset
+    def ds.fetch_rows(sql)
+      execute(sql)
+      yield({:id=>1, :x_foreign_key_0_x=>1, :x_foreign_key_1_x=>4})
+      yield({:id=>1, :x_foreign_key_0_x=>2, :x_foreign_key_1_x=>5})
+      yield({:id=>2, :x_foreign_key_0_x=>1, :x_foreign_key_1_x=>4})
+      yield({:id=>2, :x_foreign_key_0_x=>2, :x_foreign_key_1_x=>5})
+      yield({:id=>3, :x_foreign_key_0_x=>1, :x_foreign_key_1_x=>4})
+      yield({:id=>3, :x_foreign_key_0_x=>1, :x_foreign_key_1_x=>4})
+    end
+
+    @c.waw_identity_map do
+      MODEL_DB.sqls.length.should == 0
+      a = @c1.eager(:artists).all
+      MODEL_DB.sqls.length.should == 2
+      a.should == [@c1.load(:id=>1, :id2=>4), @c1.load(:id=>2, :id2=>5), @c1.load(:id=>3, :id2=>6)]
+      a.map{|x| x.artists}.should == [[@c2.load(:id=>1), @c2.load(:id=>2), @c2.load(:id=>3), @c2.load(:id=>3)], [@c2.load(:id=>1), @c2.load(:id=>2)], []]
+      MODEL_DB.sqls.length.should == 2
+    end
+  end
+
+  it "should work correctly when eagerly loading many_through_many associations" do
+    @c1.columns :id
+    @c2.columns :id
+    @c1.plugin :many_through_many
+    @c1.many_through_many :artists, [[:aa, :album_id, :artist_id]], :class=>@c2
+    ds = @c1.dataset
+    def ds.fetch_rows(sql)
+      execute(sql)
+      yield({:id=>1})
+      yield({:id=>2})
+      yield({:id=>3})
+    end
+    ds = @c2.dataset
+    def ds.fetch_rows(sql)
+      execute(sql)
+      yield({:id=>1, :x_foreign_key_x=>1})
+      yield({:id=>1, :x_foreign_key_x=>2})
+      yield({:id=>2, :x_foreign_key_x=>1})
+      yield({:id=>2, :x_foreign_key_x=>2})
+      yield({:id=>3, :x_foreign_key_x=>1})
+      yield({:id=>3, :x_foreign_key_x=>1})
+    end
+
+    @c.waw_identity_map do
+      MODEL_DB.sqls.length.should == 0
+      a = @c1.eager(:artists).all
+      MODEL_DB.sqls.length.should == 2
+      a.should == [@c1.load(:id=>1), @c1.load(:id=>2), @c1.load(:id=>3)]
+      a.map{|x| x.artists}.should == [[@c2.load(:id=>1), @c2.load(:id=>2), @c2.load(:id=>3), @c2.load(:id=>3)], [@c2.load(:id=>1), @c2.load(:id=>2)], []]
+      MODEL_DB.sqls.length.should == 2
+    end
+  end
+
+  it "should work correctly when eagerly loading many_to_many associations with composite keys" do
+    @c1.columns :id, :id2
+    @c2.columns :id
+    @c1.set_primary_key :id, :id2
+    @c1.plugin :many_through_many
+    @c1.many_through_many :artists, [[:aa, [:album_id1, :album_id2], :artist_id]], :class=>@c2
+    ds = @c1.dataset
+    def ds.fetch_rows(sql)
+      execute(sql)
+      yield({:id=>1, :id2=>4})
+      yield({:id=>2, :id2=>5})
+      yield({:id=>3, :id2=>6})
+    end
+    ds = @c2.dataset
+    def ds.fetch_rows(sql)
+      execute(sql)
+      yield({:id=>1, :x_foreign_key_0_x=>1, :x_foreign_key_1_x=>4})
+      yield({:id=>1, :x_foreign_key_0_x=>2, :x_foreign_key_1_x=>5})
+      yield({:id=>2, :x_foreign_key_0_x=>1, :x_foreign_key_1_x=>4})
+      yield({:id=>2, :x_foreign_key_0_x=>2, :x_foreign_key_1_x=>5})
+      yield({:id=>3, :x_foreign_key_0_x=>1, :x_foreign_key_1_x=>4})
+      yield({:id=>3, :x_foreign_key_0_x=>1, :x_foreign_key_1_x=>4})
+    end
+
+    @c.waw_identity_map do
+      MODEL_DB.sqls.length.should == 0
+      a = @c1.eager(:artists).all
+      MODEL_DB.sqls.length.should == 2
+      a.should == [@c1.load(:id=>1, :id2=>4), @c1.load(:id=>2, :id2=>5), @c1.load(:id=>3, :id2=>6)]
+      a.map{|x| x.artists}.should == [[@c2.load(:id=>1), @c2.load(:id=>2), @c2.load(:id=>3), @c2.load(:id=>3)], [@c2.load(:id=>1), @c2.load(:id=>2)], []]
       MODEL_DB.sqls.length.should == 2
     end
   end

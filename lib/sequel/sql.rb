@@ -38,6 +38,11 @@ module Sequel
   class LiteralString < ::String
   end
 
+  # Time subclass that gets literalized with only the time value, so it operates
+  # like a standard SQL time type.
+  class SQLTime < ::Time
+  end
+
   # The SQL module holds classes whose instances represent SQL fragments.
   # It also holds modules that are included in core ruby classes that
   # make Sequel a friendly DSL.
@@ -152,6 +157,9 @@ module Sequel
       # Operator symbols that take only a single argument
       ONE_ARITY_OPERATORS = [:NOT, :NOOP, :'B~']
 
+      # Custom expressions that may have different syntax on different databases
+      CUSTOM_EXPRESSIONS = [:extract]
+
       # An array of args for this object
       attr_reader :args
 
@@ -180,6 +188,8 @@ module Sequel
           args[1] = orig_args[1] if IN_OPERATORS.include?(op)
         when *ONE_ARITY_OPERATORS
           raise(Error, "The #{op} operator requires a single argument") unless args.length == 1
+        when *CUSTOM_EXPRESSIONS
+          # nothing
         else
           raise(Error, "Invalid operator #{op}")
         end
@@ -321,7 +331,7 @@ module Sequel
       # doesn't use the standard function calling convention, and it
       # doesn't work on all databases.
       def extract(datetime_part)
-        Function.new(:extract, PlaceholderLiteralString.new("#{datetime_part} FROM ?", [self])).sql_number
+        NumericExpression.new(:extract, datetime_part, self)
       end
 
       # Return a BooleanExpression representation of +self+.
